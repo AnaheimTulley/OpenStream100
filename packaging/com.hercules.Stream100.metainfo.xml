@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.hercules.Stream100</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>OpenStream100</name>
+  <summary>Control PipeWire applications with Hercules Stream 100 hardware</summary>
+  <description>
+    <p>
+      OpenStream100 provides up to eight pages of four per-application PipeWire volume and mute
+      controls for Hercules Stream 100 hardware on Fedora Linux. Its desktop
+      control panel manages channel assignments, custom channel colours and
+      mixer backgrounds, knob sensitivity, programmable buttons and LEDs,
+      alternate screen content, sign-in startup, service status, and the
+      controller's full-screen 480x272 display.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.hercules.Stream100.desktop</launchable>
+  <provides>
+    <binary>hercules-stream100</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.12.0" date="2026-08-04">
+      <description>
+        <p>Adds a saved live hardware screen-brightness slider without display redraws.</p>
+      </description>
+    </release>
+    <release version="0.11.5" date="2026-08-04">
+      <description>
+        <p>Uses PipeWire-Pulse per-stream monitors to deliver reliable application activity peaks.</p>
+      </description>
+    </release>
+    <release version="0.11.4" date="2026-08-04">
+      <description>
+        <p>Keeps the paired activity meters continuously refreshed while preserving independent white volume markers.</p>
+      </description>
+    </release>
+    <release version="0.11.3" date="2026-08-04">
+      <description>
+        <p>Separates the white volume marker from paired coloured live-activity meters.</p>
+      </description>
+    </release>
+    <release version="0.11.2" date="2026-08-04">
+      <description>
+        <p>Keeps live visualizer streams attached across paused application states and reports decoded activity levels.</p>
+      </description>
+    </release>
+    <release version="0.11.1" date="2026-08-04">
+      <description>
+        <p>Targets application monitor streams by WirePlumber node name and reports visualizer connection failures.</p>
+      </description>
+    </release>
+    <release version="0.11.0" date="2026-08-04">
+      <description>
+        <p>Adds true audio-reactive native meters with a selectable current-volume fallback.</p>
+      </description>
+    </release>
+    <release version="0.10.19" date="2026-08-04">
+      <description>
+        <p>Uses the supplied native-resolution transparent OpenStream100 artwork for the persistent branded display.</p>
+      </description>
+    </release>
+    <release version="0.10.18" date="2026-08-04">
+      <description>
+        <p>Adds a persistent display broker so mixer restarts retain the clean resident logo and skip cold USB display initialization.</p>
+      </description>
+    </release>
+    <release version="0.10.17" date="2026-08-04">
+      <description>
+        <p>Neutralizes the late captured native layout that reactivated faders and action-zone lines over the startup logo.</p>
+      </description>
+    </release>
+    <release version="0.10.16" date="2026-08-04">
+      <description>
+        <p>Uses the controller's official complete reset batch to remove inherited native surfaces before the startup logo is composed.</p>
+      </description>
+    </release>
+    <release version="0.10.15" date="2026-08-04">
+      <description>
+        <p>Allows the mixer to complete and cache its graceful logo transition before systemd stops the display helper.</p>
+      </description>
+    </release>
+    <release version="0.10.14" date="2026-08-04">
+      <description>
+        <p>Leaves the OpenStream100 logo resident during graceful stops so the following startup can begin with matching logo content.</p>
+      </description>
+    </release>
+    <release version="0.10.13" date="2026-08-04">
+      <description>
+        <p>Uses the last resident LCD image for the unavoidable visible first composition, then transitions cleanly to the logo and Mixer.</p>
+      </description>
+    </release>
+    <release version="0.10.12" date="2026-08-04">
+      <description>
+        <p>Moves the startup brightness gate ahead of the first captured display-layout command.</p>
+      </description>
+    </release>
+    <release version="0.10.11" date="2026-08-04">
+      <description>
+        <p>Resets all eight inherited native-meter surfaces during initialization and gates the backlight earlier.</p>
+      </description>
+    </release>
+    <release version="0.10.10" date="2026-08-04">
+      <description>
+        <p>Clears captured native-panel activations inside initialization to prevent the inherited mixer from flashing during startup.</p>
+      </description>
+    </release>
+    <release version="0.10.9" date="2026-08-04">
+      <description>
+        <p>Preserves and correctly composites transparency in startup, background, and full-screen artwork.</p>
+      </description>
+    </release>
+    <release version="0.10.8" date="2026-08-04">
+      <description>
+        <p>Repeats native surface cleanup during first-frame composition and applies a darker startup-artwork response curve.</p>
+      </description>
+    </release>
+    <release version="0.10.7" date="2026-08-04">
+      <description>
+        <p>Suppresses captured startup surfaces and presents the supplied logo at a panel-safe brightness.</p>
+      </description>
+    </release>
+    <release version="0.10.6" date="2026-08-04">
+      <description>
+        <p>Uses the supplied OpenStream100 startup artwork and shortens the hidden primer sequence.</p>
+      </description>
+    </release>
+    <release version="0.10.5" date="2026-08-04">
+      <description>
+        <p>Blends compact badge margins with the active background and reduces application-label size.</p>
+      </description>
+    </release>
+    <release version="0.10.4" date="2026-08-04">
+      <description>
+        <p>Fixes striped compact badges by using stable opaque panel-coloured margins.</p>
+      </description>
+    </release>
+    <release version="0.10.3" date="2026-08-04">
+      <description>
+        <p>Reduces the visible percentage badges to give application labels and native meters more space.</p>
+      </description>
+    </release>
+    <release version="0.10.2" date="2026-08-04">
+      <description>
+        <p>Restores the controller's original paired meters below application names using compact native updates.</p>
+      </description>
+    </release>
+    <release version="0.10.1" date="2026-08-04">
+      <description>
+        <p>Moves volume bars into the proven percentage-badge objects so they remain visible in the full-screen mixer layout.</p>
+      </description>
+    </release>
+    <release version="0.10.0" date="2026-08-04">
+      <description>
+        <p>Adds configurable native volume bars and removes the redundant volume caption from each mixer column.</p>
+      </description>
+    </release>
+    <release version="0.9.3" date="2026-08-04">
+      <description>
+        <p>Replaces page-specific colour palettes while the display remains visible, eliminating the deliberate black page-transition interval.</p>
+      </description>
+    </release>
+    <release version="0.9.2" date="2026-08-04">
+      <description>
+        <p>Keeps custom-background palettes stable so ordinary mixer-page changes redraw without a black interval.</p>
+      </description>
+    </release>
+    <release version="0.9.1" date="2026-08-04">
+      <description>
+        <p>Redraws static application labels and safely replaces colour palettes when changing mixer pages.</p>
+      </description>
+    </release>
+    <release version="0.9.0" date="2026-08-04">
+      <description>
+        <p>Adds up to eight mixer pages with four channels and programmable actions per page, plus next-page and previous-page navigation.</p>
+      </description>
+    </release>
+    <release version="0.8.3" date="2026-08-04">
+      <description>
+        <p>Corrects the remaining swapped physical inputs for programmable Buttons 2 and 3.</p>
+      </description>
+    </release>
+    <release version="0.8.2" date="2026-08-04">
+      <description>
+        <p>Corrects the physical input order of all four programmable buttons while preserving native LED illumination.</p>
+      </description>
+    </release>
+    <release version="0.8.1" date="2026-08-04">
+      <description>
+        <p>Ensures portable test installations use their updated mixer service when an older RPM is already installed.</p>
+      </description>
+    </release>
+    <release version="0.8.0" date="2026-08-04">
+      <description>
+        <p>Adds assignable microphone, speaker, media and preset channel-volume actions for all four programmable buttons, with native LED illumination.</p>
+      </description>
+    </release>
+    <release version="0.7.0" date="2026-08-04">
+      <description>
+        <p>Adds a saved 0.5% to 4.0% knob-sensitivity control while preserving the original 1.0% response by default.</p>
+      </description>
+    </release>
+    <release version="0.6.10" date="2026-08-04">
+      <description>
+        <p>Restores zero-brightness initialization after hardware testing the one-percent experiment.</p>
+      </description>
+    </release>
+    <release version="0.6.9" date="2026-08-03">
+      <description>
+        <p>Starts native compositor warm-up at one-percent brightness directly from the initialization batch.</p>
+      </description>
+    </release>
+    <release version="0.6.8" date="2026-08-03">
+      <description>
+        <p>Uses a fully black primer palette to mask stale firmware layers during first-frame convergence.</p>
+      </description>
+    </release>
+    <release version="0.6.7" date="2026-08-03">
+      <description>
+        <p>Uses an active black primer before revealing the branded startup framebuffer.</p>
+      </description>
+    </release>
+    <release version="0.6.6" date="2026-08-03">
+      <description>
+        <p>Latches minimum startup brightness before the hidden active-panel redraw begins.</p>
+      </description>
+    </release>
+    <release version="0.6.5" date="2026-08-03">
+      <description>
+        <p>Primes the initial compositor through a minimum-brightness redraw before revealing the loading screen.</p>
+      </description>
+    </release>
+    <release version="0.6.4" date="2026-08-03">
+      <description>
+        <p>Extends dark first-frame settling so only the completed loading screen is illuminated.</p>
+      </description>
+    </release>
+    <release version="0.6.3" date="2026-08-03">
+      <description>
+        <p>Allows the first generated framebuffer to settle before revealing the branded startup screen.</p>
+      </description>
+    </release>
+    <release version="0.6.2" date="2026-08-03">
+      <description>
+        <p>Hides the non-atomic transition from the startup framebuffer into the saved screen.</p>
+      </description>
+    </release>
+    <release version="0.6.1" date="2026-08-03">
+      <description>
+        <p>Hides captured initialization layers until the complete OpenStream100 startup frame is ready.</p>
+      </description>
+    </release>
+    <release version="0.6.0" date="2026-08-03">
+      <description>
+        <p>Adds a branded startup display and a palette-safe transition into the saved screen mode.</p>
+      </description>
+    </release>
+    <release version="0.5.0" date="2026-08-03">
+      <description>
+        <p>Introduces the OpenStream100 name and displays the application version in the control panel.</p>
+      </description>
+    </release>
+    <release version="0.4.2" date="2026-08-03">
+      <description>
+        <p>Removes the remaining firmware dividers from full-screen image mode.</p>
+      </description>
+    </release>
+    <release version="0.4.1" date="2026-08-03">
+      <description>
+        <p>Removes the remaining firmware dividers from full-screen image mode.</p>
+      </description>
+    </release>
+    <release version="0.4.0" date="2026-08-03">
+      <description>
+        <p>Adds a separate edge-to-edge image mode while retaining live audio controls.</p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-08-03">
+      <description>
+        <p>Adds custom background images while retaining compact, tear-free live updates.</p>
+      </description>
+    </release>
+    <release version="0.2.1" date="2026-08-03">
+      <description>
+        <p>Corrects hardware palette selection and native badge colour ordering.</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-08-03">
+      <description>
+        <p>Adds saved custom colours to all four mixer channels.</p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-08-03">
+      <description>
+        <p>Initial Fedora RPM release with the hardware-validated v48 mixer.</p>
+      </description>
+    </release>
+  </releases>
+</component>

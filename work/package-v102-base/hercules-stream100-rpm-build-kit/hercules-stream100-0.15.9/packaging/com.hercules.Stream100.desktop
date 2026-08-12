@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OpenStream100
+GenericName=Audio Mixer Controller
+Comment=Configure OpenStream100 for the Hercules Stream 100
+Exec=hercules-stream100
+Icon=com.hercules.Stream100
+Terminal=false
+Categories=AudioVideo;Audio;Settings;
+Keywords=audio;mixer;volume;pipewire;streaming;
+StartupNotify=true

@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+exec /usr/libexec/hercules-stream100/run-stream100-control.sh "$@"

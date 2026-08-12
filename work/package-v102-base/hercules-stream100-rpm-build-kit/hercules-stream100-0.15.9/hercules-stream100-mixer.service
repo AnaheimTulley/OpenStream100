@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenStream100 PipeWire mixer
+Requires=hercules-stream100-display.service
+After=pipewire.service wireplumber.service hercules-stream100-display.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/hercules-stream100/run-stream100-mixer.sh --require-display-broker
+WorkingDirectory=/usr/libexec/hercules-stream100
+Environment=WAYLAND_DISPLAY=%i
+KillMode=mixed
+TimeoutStopSec=15s
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

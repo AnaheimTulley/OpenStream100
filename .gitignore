@@ -1,0 +1,84 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+# Build artifacts
+*.rpm
+*.tar.gz
+*.bin
+*.pcap
+*.pcapng
+*.pcapng.gz
+
+# Heavy media files
+*.MOV
+*.HEIC
+*.exe
+*.png
+*.jpg
+*.jpeg
+*.log
+*.txt
+*.err.txt
+*.out.txt
+
+# Reverse engineering materials
+reverse-engineering/
+
+# Old package versions
+work/package-v96/
+work/package-v97/
+work/package-v98/
+work/verify-*/
+work/package/
+
+# Old source trees in build kit (keep only v0.15.9)
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.12.0/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.13.0/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.13.1/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.14.7/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.14.8/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.14.9/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.0/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.1/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.2/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.3/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.4/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.5/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.6/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.7/
+work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-0.15.8/
+
+# Old tarballs and build dist
+work/package-v102-base/hercules-stream100-rpm-build-kit/*.tar.gz
+work/package-v102-base/hercules-stream100-rpm-build-kit/dist/
+work/package-v102-base/hercules-stream100-rpm-build-kit/rpm-dist/
+work/package-v102-base/hercules-stream100-rpm-build-kit/SHA256SUMS
+work/package-v102-base/hercules-stream100-rpm-build-kit/build-stream100-rpm-v0.14.8.sh
+
+# Startup frame directories
+work/startup-*/
+work/reconstructed_frames/
+
+# Video tools
+work/video-tools/
+
+# Analysis/test scripts (not needed for building)
+work/analyze_*.py
+work/check_*.py
+work/compare_*.py
+work/extract-*.py
+work/extract-*.js
+work/inspect_*.py
+work/match_*.py
+work/parse_*.py
+work/reconstruct_*.py
+work/render_*.py
+work/trace_*.py
+work/build_beta_archive.py
+work/build_rpm_kit.py
+
+# Log files
+work/stream100-display-test-*.log
+work/stream100-input-events.txt
+

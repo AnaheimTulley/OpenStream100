@@ -1,0 +1,2 @@
+# Allow the locally logged-in user to access the Hercules Stream 100.
+SUBSYSTEM=="usb", ATTR{idVendor}=="06f8", ATTR{idProduct}=="e053", TAG+="uaccess"
