@@ -24,6 +24,33 @@ static void assert_style(unsigned char saved_style,
     assert(body[26] == 0x00);
 }
 
+static void assert_notepad_metadata_mode(void) {
+    unsigned char frame[FRAME_INPUT_SIZE] = {0};
+    unsigned char *metadata = frame + FRAME_METADATA_V2_OFFSET;
+    unsigned char levels[4];
+    unsigned char meter_left_levels[4];
+    unsigned char meter_right_levels[4];
+    unsigned char muted_mask;
+    unsigned char online_mask;
+    unsigned char display_mode;
+    unsigned char channel_colors[4][3];
+    unsigned char button_leds[4];
+    unsigned char page_index;
+    unsigned char page_count;
+    unsigned char meter_style;
+    unsigned char volume_meters;
+    unsigned char display_brightness;
+
+    memcpy(metadata, "S1C3", 4);
+    metadata[10] = 5;
+    assert(read_native_metadata(
+        frame, levels, meter_left_levels, meter_right_levels,
+        &muted_mask, &online_mask, &display_mode,
+        channel_colors, button_leds, &page_index, &page_count,
+        &meter_style, &volume_meters, &display_brightness) == 1);
+    assert(display_mode == 5);
+}
+
 int main(void) {
     unsigned char clear[NATIVE_PANEL_STATE_BYTES];
 
@@ -40,6 +67,8 @@ int main(void) {
         assert(clear[offset] == 0x00);
     }
 
-    puts("native meter panel records: PASS");
+    assert_notepad_metadata_mode();
+
+    puts("native meter panel records and Notepad metadata: PASS");
     return 0;
 }

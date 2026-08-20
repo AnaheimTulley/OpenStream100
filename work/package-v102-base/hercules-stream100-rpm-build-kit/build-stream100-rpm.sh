@@ -2,7 +2,8 @@
 set -euo pipefail
 
 kit_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source_archive="$kit_dir/hercules-stream100-0.15.9.tar.gz"
+source_dir="$kit_dir/hercules-stream100-0.17.0"
+source_archive="$kit_dir/hercules-stream100-0.17.0.tar.gz"
 spec_file="$kit_dir/hercules-stream100.spec"
 output_dir="$kit_dir/dist"
 install_after_build=0
@@ -14,12 +15,29 @@ elif [[ $# -ne 0 ]]; then
     exit 2
 fi
 
-for required in "$source_archive" "$spec_file"; do
+for required in \
+    "$source_dir/stream100-control.py" \
+    "$source_dir/stream100_virtual_mixer.py" \
+    "$source_dir/run-stream100-virtual-mixer.sh" \
+    "$source_dir/stream100-test-virtual-mixer.py" \
+    "$spec_file"; do
     if [[ ! -f "$required" ]]; then
         echo "Missing RPM build input: $required"
         exit 1
     fi
 done
+
+echo "Refreshing the RPM source archive from the current source tree..."
+archive_staging="$(mktemp --tmpdir="$kit_dir" .hercules-stream100.XXXXXX.tar.gz)"
+tar \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --create \
+    --gzip \
+    --file="$archive_staging" \
+    --directory="$kit_dir" \
+    "$(basename -- "$source_dir")"
+mv -- "$archive_staging" "$source_archive"
 
 build_packages=(
     appstream
@@ -62,7 +80,7 @@ find "$topdir/RPMS" "$topdir/SRPMS" -type f -name '*.rpm' \
 
 mapfile -t installable_rpms < <(
     find "$output_dir" -maxdepth 1 -type f \
-        -name 'hercules-stream100-0.15.9-1*.rpm' \
+        -name 'hercules-stream100-0.17.0-3*.rpm' \
         ! -name '*.src.rpm' \
         ! -name '*-debuginfo-*' \
         ! -name '*-debugsource-*'

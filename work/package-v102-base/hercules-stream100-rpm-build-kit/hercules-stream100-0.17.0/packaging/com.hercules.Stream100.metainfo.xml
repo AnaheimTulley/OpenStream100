@@ -14,8 +14,9 @@
       with four visualiser styles,
       knob sensitivity,
       programmable buttons and LEDs,
-      alternate screen content, sign-in startup, service status, and the
-      controller's full-screen 480x272 display.
+      full-screen image and notepad content, a resizable mouse-controlled virtual
+      mixer, sign-in startup, service status, and the controller's full-screen
+      480x272 display.
     </p>
   </description>
   <launchable type="desktop-id">com.hercules.Stream100.desktop</launchable>
@@ -24,6 +25,21 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.17.0" date="2026-08-20">
+      <description>
+        <p>Adds configurable Notepad typography, an aspect-locked hardware-styled virtual mixer, shared crisp channel icons, and page-safe hardware icon caching.</p>
+      </description>
+    </release>
+    <release version="0.16.1" date="2026-08-19">
+      <description>
+        <p>Matches the firmware-owned lower separators to the Notepad card while preserving image and mixer compositor settings.</p>
+      </description>
+    </release>
+    <release version="0.16.0" date="2026-08-19">
+      <description>
+        <p>Adds a saved full-screen Notepad mode for typed or pasted reference notes while keeping all hardware controls active.</p>
+      </description>
+    </release>
     <release version="0.15.9" date="2026-08-11">
       <description>
         <p>Preserves independent stereo rendering in the native Segmented visualiser by applying its required E053 companion mode.</p>

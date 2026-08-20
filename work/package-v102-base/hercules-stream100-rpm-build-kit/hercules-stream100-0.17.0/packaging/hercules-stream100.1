@@ -1,4 +1,4 @@
-.TH HERCULES-STREAM100 1 "August 2026" "OpenStream100 0.15.9" "User Commands"
+.TH HERCULES-STREAM100 1 "August 2026" "OpenStream100 0.17.0" "User Commands"
 .SH NAME
 hercules-stream100 \- open the OpenStream100 control panel
 .SH SYNOPSIS
@@ -10,7 +10,9 @@ hercules-stream100 \- open the OpenStream100 control panel
 opens the OpenStream100 GTK control panel for assigning four physical encoders to active
 PipeWire playback applications. The panel can start and stop the per-user mixer
 service, choose channel colours, mixer backgrounds, and button-label overlays,
-switch between the mixer and a separate full-screen image, adjust the hardware
+switch between the mixer, a separate full-screen image, and an editable notepad
+with saved font size, family, style, text colour, and alignment,
+adjust the hardware
 screen brightness, and enable automatic startup at sign-in.
 .PP
 The controller is identified by USB ID 06f8:e053. The mixer drives its 480x272
@@ -25,7 +27,7 @@ Saved assignments, colours, images, and button calibration are retained.
 .SH FILES
 .TP
 .I ~/.config/hercules-stream100/config.json
-Per-user channel assignments, colours, display mode, brightness, images, and button calibration.
+Per-user channel assignments, colours, display mode, notepad text, brightness, images, and button calibration.
 .TP
 .I ~/.config/hercules-stream100/background.png
 Application-managed copy of the selected display background.

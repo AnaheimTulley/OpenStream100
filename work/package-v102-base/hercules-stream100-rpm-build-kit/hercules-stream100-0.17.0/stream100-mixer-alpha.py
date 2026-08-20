@@ -174,8 +174,8 @@ def _resolve_channel_streams(channels: list[dict], mixer_state: dict):
 
 
 # ---------------------------------------------------------------------------
-# Icon cache — resolves icons once and caches by stream node ID for performance.
-# Keys are (channel_index, stream_id) tuples; values are PIL RGBA images or None.
+# Icon cache — retains one image and its full identity for each on-screen column.
+# Keys are (channel_index, cache_slot) tuples; values are signatures or images.
 # ---------------------------------------------------------------------------
 
 _icon_cache: dict[tuple[int, int], Any] = {}
@@ -194,6 +194,55 @@ def _clear_icon_cache() -> None:
     _icon_cache_version += 1
 
 
+def _channel_icon_signature(ch: dict, streams: list[dict], icon_size: int) -> tuple:
+    """Identify the channel assignment and applications an icon represents."""
+    stream_signature = tuple(
+        (
+            stream.get("id"),
+            stream.get("props", {}).get("application.icon-name"),
+            stream.get("props", {}).get("application.id"),
+            stream.get("props", {}).get("application.process.binary"),
+        )
+        for stream in streams
+    )
+    return (
+        ch.get("kind"),
+        ch.get("label"),
+        ch.get("application_id"),
+        ch.get("property"),
+        ch.get("value"),
+        stream_signature,
+        icon_size,
+        _icon_cache_version,
+    )
+
+
+def _cached_channel_icon(
+    channel_idx: int,
+    ch: dict,
+    streams: list[dict],
+    icon_size: int,
+) -> tuple[Any, bool]:
+    """Return only an icon whose cached identity matches the current page."""
+    from stream100_channel_icons import (
+        load_channel_fallback_icon,
+        load_channel_icon,
+    )
+
+    signature_key = _icon_cache_key(channel_idx, -2)
+    image_key = _icon_cache_key(channel_idx, -1)
+    signature = _channel_icon_signature(ch, streams, icon_size)
+    if _icon_cache.get(signature_key) == signature and image_key in _icon_cache:
+        return _icon_cache[image_key], False
+
+    icon_img = load_channel_icon(ch, streams, icon_size=icon_size)
+    if icon_img is None:
+        icon_img = load_channel_fallback_icon(ch, icon_size=icon_size)
+    _icon_cache[signature_key] = signature
+    _icon_cache[image_key] = icon_img
+    return icon_img, True
+
+
 def _resolve_channel_icons_for_streams(
     channels: list[dict],
     streams_by_ch: list[list[dict]],
@@ -203,57 +252,23 @@ def _resolve_channel_icons_for_streams(
 
     Returns a mapping of *channel_index → icon image* (or ``None`` when no
     icon is available) along with the set of channels whose icons changed
-    since the previous call.  Resolved icons are cached by stream node ID so
-    that repeated renders do not re-resolve unchanged streams.
+    since the previous call. Resolved icons are cached by channel assignment
+    and stream identity so repeated renders do not re-resolve unchanged icons.
 
     :func:`_on_icon_cache_changed` is called with the set of channels whose
     icons changed since the previous call, enabling dynamic notification to
     the display socket when applications open or close.
     """
-    from stream100_channel_icons import load_channel_icon, get_icon_name, load_emoji_fallback
-
     icon_map: dict[int, Any] = {}
     changed_channels: set[int] = set()
 
     for i, ch in enumerate(channels):
         streams = streams_by_ch[i] if i < len(streams_by_ch) else []
-        cached_icon = _icon_cache.get(_icon_cache_key(i, -1))
-
-        # Check if any individual stream icons changed (new app opened / closed)
-        has_live_streams = bool(streams)
-        if has_live_streams:
-            for s in streams:
-                sid = s.get("id", 0)
-                sk = _icon_cache_key(i, sid)
-                if sk not in _icon_cache:
-                    changed_channels.add(i)
-                    break
-
-        # Resolve icon (using cached stream data when available)
-        icon_img = load_channel_icon(ch, streams, icon_size=icon_size)
-        if icon_img is None and has_live_streams:
-            # Cache individual stream icons for future lookups
-            for s in streams:
-                sid = s.get("id", 0)
-                sk = _icon_cache_key(i, sid)
-                if sk not in _icon_cache:
-                    temp_ch = dict(ch)
-                    temp_ch["application_id"] = str(
-                        s.get("props", {}).get("application.id", ch.get("application_id", ""))
-                    )
-                    icon_img = load_channel_icon(temp_ch, [s], icon_size=icon_size)
-                    _icon_cache[sk] = icon_img
-
-        if icon_img is None:
-            icon_name = get_icon_name(ch, streams)
-            icon_img = load_emoji_fallback(icon_name, icon_size=icon_size)
-
-        # Detect changes (compare with previous cache state via version check)
-        if i not in _icon_cache or _icon_cache.get(_icon_cache_key(i, -1000)) != _icon_cache_version:
+        icon_img, icon_changed = _cached_channel_icon(i, ch, streams, icon_size)
+        if icon_changed:
             changed_channels.add(i)
 
         icon_map[i] = icon_img
-        _icon_cache[_icon_cache_key(i, -1)] = icon_img
 
     return icon_map, changed_channels
 
@@ -275,8 +290,6 @@ def _draw_channel_icons_on_mixer(
     badge_outline=None,
 ):
     """Draw small icons on the top-right of each channel column."""
-    from stream100_channel_icons import load_channel_icon, get_icon_name, load_emoji_fallback  # noqa: E501
-
     for i, ch in enumerate(channels):
         col_right = i * 120 + 120  # each column is 120 px wide
         cx = col_right - 18
@@ -284,10 +297,7 @@ def _draw_channel_icons_on_mixer(
         r = icon_size // 2
 
         streams = streams_by_ch[i] if i < len(streams_by_ch) else []
-        icon_img = load_channel_icon(ch, streams, icon_size=icon_size)
-        if icon_img is None:
-            icon_name = get_icon_name(ch, streams)
-            icon_img = load_emoji_fallback(icon_name, icon_size=icon_size)
+        icon_img, _icon_changed = _cached_channel_icon(i, ch, streams, icon_size)
 
         paste_area = (cx - r, cy_top + 1, cx + r, cy_top + 1 + icon_size)
         image.paste(
@@ -373,6 +383,11 @@ def parse_args() -> argparse.Namespace:
         help="map native action-zone styles that cover the bottom area",
     )
     parser.add_argument(
+        "--display-action-color-test",
+        action="store_true",
+        help="map action-zone colour packing against the Notepad card",
+    )
+    parser.add_argument(
         "--display-helper",
         type=Path,
         default=DEFAULT_DISPLAY_HELPER,
@@ -426,6 +441,19 @@ DEFAULT_CHANNEL_COLORS: list[tuple[int, int, int]] = [
     (246, 190, 64),
     (91, 130, 246),
 ]
+NOTEPAD_FONT_FAMILIES = ("sans", "serif", "monospace")
+NOTEPAD_FONT_STYLES = ("regular", "bold", "italic", "bold-italic")
+NOTEPAD_ALIGNMENTS = ("left", "center", "right")
+DEFAULT_NOTEPAD_TEXT_COLOR = "#EFF4F9"
+MIN_NOTEPAD_FONT_SIZE = 10
+MAX_NOTEPAD_FONT_SIZE = 40
+DEFAULT_NOTEPAD_STYLE: dict[str, object] = {
+    "font_size": 0,
+    "font_family": "sans",
+    "font_style": "regular",
+    "text_color": DEFAULT_NOTEPAD_TEXT_COLOR,
+    "alignment": "left",
+}
 
 DISPLAY_WIDTH = 480
 DISPLAY_HEIGHT = 272
@@ -1002,37 +1030,69 @@ class PipeWireLevelMonitor:
         self.close_readers()
 
 
-_FONT_CACHE: dict[tuple[int, bool], Any] = {}
-_FONT_PATHS: dict[bool, str | None] = {False: None, True: None}
+_FONT_CACHE: dict[tuple[int, str, bool, bool], Any] = {}
+_FONT_PATHS: dict[tuple[str, bool, bool], str | None] = {}
 
 
-def font_path(bold: bool) -> str | None:
-    if _FONT_PATHS[bold] is not None:
-        return _FONT_PATHS[bold]
+def font_path(bold: bool, family: str = "sans", italic: bool = False) -> str | None:
+    family = family if family in NOTEPAD_FONT_FAMILIES else "sans"
+    key = (family, bold, italic)
+    if key in _FONT_PATHS:
+        return _FONT_PATHS[key]
     if shutil.which("fc-match") is None:
         return None
-    patterns = ["sans-serif:style=Bold", "sans-serif"] if bold else ["sans-serif"]
+    generic_family = {
+        "sans": "sans-serif",
+        "serif": "serif",
+        "monospace": "monospace",
+    }[family]
+    style = (
+        "Bold Italic"
+        if bold and italic
+        else "Bold" if bold else "Italic" if italic else "Regular"
+    )
+    patterns = [f"{generic_family}:style={style}", generic_family]
     for pattern in patterns:
         result = command(["fc-match", "-f", "%{file}", pattern])
         candidate = result.stdout.strip()
         if result.returncode == 0 and candidate and Path(candidate).exists():
-            _FONT_PATHS[bold] = candidate
+            _FONT_PATHS[key] = candidate
             return candidate
+    _FONT_PATHS[key] = None
     return None
 
 
-def ui_font(size: int, bold: bool = False):
-    key = (size, bold)
+def ui_font(
+    size: int,
+    bold: bool = False,
+    family: str = "sans",
+    italic: bool = False,
+):
+    family = family if family in NOTEPAD_FONT_FAMILIES else "sans"
+    key = (size, family, bold, italic)
     if key in _FONT_CACHE:
         return _FONT_CACHE[key]
     from PIL import ImageFont
 
-    path = font_path(bold)
+    path = font_path(bold, family, italic)
     if path is not None:
         font = ImageFont.truetype(path, size=size)
     else:
+        base_name = {
+            "sans": "DejaVuSans",
+            "serif": "DejaVuSerif",
+            "monospace": "DejaVuSansMono",
+        }[family]
+        suffix = (
+            "-BoldItalic" if family == "serif" and bold and italic
+            else "-Italic" if family == "serif" and italic
+            else "-BoldOblique" if bold and italic
+            else "-Oblique" if italic
+            else "-Bold" if bold
+            else ""
+        )
         try:
-            font = ImageFont.truetype("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf", size)
+            font = ImageFont.truetype(f"{base_name}{suffix}.ttf", size)
         except OSError:
             font = ImageFont.load_default()
     _FONT_CACHE[key] = font
@@ -1043,6 +1103,39 @@ def draw_centered(draw, text: str, y: int, font, fill, left: int, right: int) ->
     bounds = draw.textbbox((0, 0), text, font=font)
     width = bounds[2] - bounds[0]
     draw.text((left + (right - left - width) // 2, y), text, font=font, fill=fill)
+
+
+def normalise_notepad_style(value: object) -> dict[str, object]:
+    source = value if isinstance(value, dict) else {}
+    font_size = source.get("font_size", 0)
+    if (
+        isinstance(font_size, bool)
+        or not isinstance(font_size, (int, float))
+        or (font_size != 0 and not MIN_NOTEPAD_FONT_SIZE <= font_size <= MAX_NOTEPAD_FONT_SIZE)
+    ):
+        font_size = 0
+    family = source.get("font_family", "sans")
+    style = source.get("font_style", "regular")
+    alignment = source.get("alignment", "left")
+    text_color = str(source.get("text_color", "")).strip().upper()
+    if not (
+        len(text_color) == 7
+        and text_color.startswith("#")
+        and all(character in "0123456789ABCDEF" for character in text_color[1:])
+    ):
+        text_color = DEFAULT_NOTEPAD_TEXT_COLOR
+    return {
+        "font_size": int(font_size),
+        "font_family": family if family in NOTEPAD_FONT_FAMILIES else "sans",
+        "font_style": style if style in NOTEPAD_FONT_STYLES else "regular",
+        "text_color": text_color,
+        "alignment": alignment if alignment in NOTEPAD_ALIGNMENTS else "left",
+    }
+
+
+def notepad_text_color(style: dict[str, object]) -> tuple[int, int, int]:
+    value = str(style["text_color"])
+    return tuple(int(value[offset : offset + 2], 16) for offset in (1, 3, 5))
 
 
 def fit_label(draw, label: str, font, width: int) -> list[str]:
@@ -1071,6 +1164,104 @@ def fit_label(draw, label: str, font, width: int) -> list[str]:
         if not lines[-1].endswith("…"):
             lines[-1] += "…"
     return lines
+
+
+def wrap_note_text(draw, text: str, font, width: int) -> list[str]:
+    """Wrap user-authored note text while preserving intentional line breaks."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").expandtabs(4)
+    lines: list[str] = []
+    for paragraph in normalized.strip("\n").split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = ""
+        for word in words:
+            candidate = word if not current else f"{current} {word}"
+            if draw.textlength(candidate, font=font) <= width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+                current = ""
+            if draw.textlength(word, font=font) <= width:
+                current = word
+                continue
+            fragment = ""
+            for character in word:
+                candidate = fragment + character
+                if fragment and draw.textlength(candidate, font=font) > width:
+                    lines.append(fragment)
+                    fragment = character
+                else:
+                    fragment = candidate
+            current = fragment
+        if current:
+            lines.append(current)
+    return lines
+
+
+def fit_note_text(
+    draw,
+    text: str,
+    width: int,
+    height: int,
+    font_size: int = 0,
+    font_family: str = "sans",
+    font_style: str = "regular",
+) -> tuple[Any, list[str], int, bool]:
+    """Fit an automatic or fixed note font and ellipsize only when required."""
+    family = font_family if font_family in NOTEPAD_FONT_FAMILIES else "sans"
+    style = font_style if font_style in NOTEPAD_FONT_STYLES else "regular"
+    bold = style in {"bold", "bold-italic"}
+    italic = style in {"italic", "bold-italic"}
+    sizes = (
+        (max(MIN_NOTEPAD_FONT_SIZE, min(MAX_NOTEPAD_FONT_SIZE, font_size)),)
+        if font_size
+        else (26, 24, 22, 20, 18, 16, 14)
+    )
+    selected_font = ui_font(sizes[-1], bold, family, italic)
+    selected_lines = wrap_note_text(draw, text, selected_font, width)
+    selected_line_height = max(sizes[-1] + 3, 18)
+    for size in sizes:
+        font = ui_font(size, bold, family, italic)
+        bounds = draw.textbbox((0, 0), "Ag", font=font)
+        line_height = max(size + 3, bounds[3] - bounds[1] + 5)
+        lines = wrap_note_text(draw, text, font, width)
+        if len(lines) * line_height <= height:
+            return font, lines, line_height, False
+        selected_font = font
+        selected_lines = lines
+        selected_line_height = line_height
+
+    visible_count = max(1, height // selected_line_height)
+    visible_lines = selected_lines[:visible_count]
+    if len(selected_lines) > visible_count:
+        final_line = visible_lines[-1].rstrip()
+        while (
+            final_line
+            and draw.textlength(final_line + "…", font=selected_font) > width
+        ):
+            final_line = final_line[:-1].rstrip()
+        visible_lines[-1] = final_line + "…"
+        return selected_font, visible_lines, selected_line_height, True
+    return selected_font, visible_lines, selected_line_height, False
+
+
+def note_line_x(
+    draw,
+    line: str,
+    font,
+    left: int,
+    width: int,
+    alignment: str,
+) -> int:
+    line_width = round(draw.textlength(line, font=font))
+    if alignment == "center":
+        return left + max(0, (width - line_width) // 2)
+    if alignment == "right":
+        return left + max(0, width - line_width)
+    return left
 
 
 def nearest_palette_indices(
@@ -1598,6 +1789,37 @@ def run_display_fullscreen_test(helper: Path, replay: Path) -> int:
         display.close()
 
 
+def run_display_action_color_test(helper: Path, replay: Path) -> int:
+    display = DisplayController(helper, replay, ("--action-color-test",))
+    try:
+        channels = [
+            {"kind": "application", "label": f"Channel {index + 1}"}
+            for index in range(4)
+        ]
+        frame = render_notepad_display(
+            channels,
+            [[], [], [], []],
+            [False, False, False, False],
+            [0.5, 0.5, 0.5, 0.5],
+            "Separator colour test\n"
+            "Watch the three lower divider lines.\n"
+            "Channel 1 shows phases 0 through 5.",
+        )
+        print("NOTEPAD ACTION-ZONE COLOUR MAP", flush=True)
+        print(
+            "Six phases test the SDK colour encodings against the Notepad "
+            "card. Channel 1 shows the phase number; note any phase where "
+            "all three lower divider lines disappear.",
+            flush=True,
+        )
+        display.submit(frame)
+        hold_display_test(display, 22.0)
+        print("Notepad action-zone colour test completed.", flush=True)
+        return 0
+    finally:
+        display.close()
+
+
 def run_display_solid_test(helper: Path, replay: Path) -> int:
     display = DisplayController(helper, replay)
     try:
@@ -1682,6 +1904,7 @@ def native_display_metadata(
     metadata[10] = {
         "mixer": 1,
         "image": 2,
+        "notepad": 5,
         "startup": 3,
         "startup-primer": 4,
     }.get(display_mode, 1)
@@ -2102,6 +2325,107 @@ def render_fullscreen_image_display(
     return bytes(palette) + pack_device_framebuffer(row_major)
 
 
+def render_notepad_display(
+    channels: list[dict[str, str]],
+    targets: list[list[str]],
+    muted: list[bool],
+    saved_levels: list[float],
+    note_text: str,
+    notepad_style: dict[str, object] | None = None,
+    button_leds: list[int] | None = None,
+    page_index: int = 0,
+    page_count: int = 1,
+    display_brightness: int = DEFAULT_DISPLAY_BRIGHTNESS,
+) -> bytes:
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as error:
+        raise RuntimeError(
+            "Pillow is required for the LCD. On Fedora, install python3-pillow."
+        ) from error
+
+    active_style = normalise_notepad_style(notepad_style)
+    body_color = notepad_text_color(active_style)
+    image = Image.new("RGB", (DISPLAY_WIDTH, DISPLAY_HEIGHT), UI_COLORS[0])
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (9, 9, DISPLAY_WIDTH - 10, DISPLAY_HEIGHT - 10),
+        radius=13,
+        fill=UI_COLORS[1],
+        outline=UI_COLORS[8],
+        width=2,
+    )
+    draw.rounded_rectangle(
+        (10, 10, DISPLAY_WIDTH - 11, 47),
+        radius=12,
+        fill=UI_COLORS[10],
+    )
+    draw.rectangle((10, 35, DISPLAY_WIDTH - 11, 47), fill=UI_COLORS[10])
+    draw.rectangle((10, 46, DISPLAY_WIDTH - 11, 48), fill=UI_COLORS[4])
+    draw.text((23, 16), "NOTES", font=ui_font(18, bold=True), fill=UI_COLORS[2])
+
+    normalized = note_text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if normalized:
+        body_left = 23
+        body_top = 59
+        body_width = DISPLAY_WIDTH - body_left - 23
+        body_height = DISPLAY_HEIGHT - body_top - 17
+        font, lines, line_height, _truncated = fit_note_text(
+            draw,
+            normalized,
+            body_width,
+            body_height,
+            int(active_style["font_size"]),
+            str(active_style["font_family"]),
+            str(active_style["font_style"]),
+        )
+        y = body_top
+        for line in lines:
+            x = note_line_x(
+                draw,
+                line,
+                font,
+                body_left,
+                body_width,
+                str(active_style["alignment"]),
+            )
+            draw.text((x, y), line, font=font, fill=body_color)
+            y += line_height
+    else:
+        prompt_font = ui_font(17)
+        draw_centered(
+            draw,
+            "Type or paste a note in the control panel",
+            126,
+            prompt_font,
+            UI_COLORS[3],
+            16,
+            DISPLAY_WIDTH - 16,
+        )
+
+    channel_colors = [
+        channel_color(channel, index) for index, channel in enumerate(channels)
+    ]
+    fixed_palette = list(UI_COLORS)
+    fixed_palette[4:8] = channel_colors
+    fixed_palette[15] = body_color
+    row_major, palette_colors = rich_palette_indices(image, fixed_palette)
+    palette = bytearray(palette_rgb565(palette_colors))
+    metadata = native_display_metadata(
+        channels,
+        targets,
+        muted,
+        saved_levels,
+        display_mode="notepad",
+        button_leds=button_leds,
+        page_index=page_index,
+        page_count=page_count,
+        display_brightness=display_brightness,
+    )
+    palette[-len(metadata):] = metadata
+    return bytes(palette) + pack_device_framebuffer(row_major)
+
+
 def render_startup_display(
     final_frame: bytes, logo_path: Path = DEFAULT_STARTUP_LOGO
 ) -> bytes:
@@ -2189,7 +2513,7 @@ def load_resident_display_frame(
         len(cached) != DISPLAY_MESSAGE_BYTES
         or cached[metadata_offset : metadata_offset + 4]
         not in NATIVE_METADATA_MAGICS
-        or cached[metadata_offset + 10] not in (1, 2, 3)
+        or cached[metadata_offset + 10] not in (1, 2, 3, 5)
     ):
         return fallback_frame
     return cached
@@ -2202,7 +2526,7 @@ def save_resident_display_frame(cache_path: Path, frame: bytes) -> None:
         len(frame) != DISPLAY_MESSAGE_BYTES
         or frame[metadata_offset : metadata_offset + 4]
         not in NATIVE_METADATA_MAGICS
-        or frame[metadata_offset + 10] not in (1, 2, 3)
+        or frame[metadata_offset + 10] not in (1, 2, 3, 5)
     ):
         raise RuntimeError("cannot cache an invalid resident display frame")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2420,7 +2744,27 @@ def load_display_mode(path: Path) -> str:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return "mixer"
     value = payload.get("display_mode", "mixer") if isinstance(payload, dict) else "mixer"
-    return value if value in {"mixer", "image"} else "mixer"
+    return value if value in {"mixer", "image", "notepad"} else "mixer"
+
+
+def load_notepad_text(path: Path) -> str:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    value = payload.get("notepad_text", "") if isinstance(payload, dict) else ""
+    if not isinstance(value, str):
+        return ""
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def load_notepad_style(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return dict(DEFAULT_NOTEPAD_STYLE)
+    value = payload.get("notepad_style") if isinstance(payload, dict) else None
+    return normalise_notepad_style(value)
 
 
 def load_show_volume_meters(path: Path) -> bool:
@@ -3055,6 +3399,8 @@ def run_mixer(
     background_image: Path | None,
     display_mode: str,
     fullscreen_image: Path | None,
+    notepad_text: str,
+    notepad_style: dict[str, object],
     show_volume_meters: bool,
     meter_channel_mode: str,
     meter_style: str,
@@ -3107,10 +3453,11 @@ def run_mixer(
         for encoder, channel in enumerate(channels, 1):
             suffix = " (inverted)" if encoder in inverted else ""
             print(f"  Encoder {encoder}: {channel.get('label', 'Disabled')}{suffix}")
-        print(
-            "  Display: "
-            + ("full-screen image" if display_mode == "image" else "mixer")
-        )
+        display_label = {
+            "image": "full-screen image",
+            "notepad": "notepad",
+        }.get(display_mode, "mixer")
+        print(f"  Display: {display_label}")
         print("\nCalibrating for half a second...")
 
         previous: bytes | None = None
@@ -3193,6 +3540,19 @@ def run_mixer(
                         muted,
                         saved_levels,
                         fullscreen_image,
+                        button_leds=programmable_leds,
+                        page_index=current_page,
+                        page_count=len(pages),
+                        display_brightness=display_brightness,
+                    )
+                elif display_mode == "notepad":
+                    display_base_frame = render_notepad_display(
+                        channels,
+                        targets,
+                        muted,
+                        saved_levels,
+                        notepad_text,
+                        notepad_style,
                         button_leds=programmable_leds,
                         page_index=current_page,
                         page_count=len(pages),
@@ -3395,6 +3755,19 @@ def run_mixer(
                                     page_count=len(pages),
                                     display_brightness=display_brightness,
                                 )
+                            elif display_mode == "notepad":
+                                display_frame = render_notepad_display(
+                                    channels,
+                                    targets,
+                                    muted,
+                                    saved_levels,
+                                    notepad_text,
+                                    notepad_style,
+                                    button_leds=programmable_leds,
+                                    page_index=current_page,
+                                    page_count=len(pages),
+                                    display_brightness=display_brightness,
+                                )
                             else:
                                 display_frame = render_mixer_display(
                                     channels,
@@ -3541,6 +3914,13 @@ def run_mixer(
                             page_streams_by_ch = _resolve_channel_streams(
                                 channels, {"streams": streams}
                             )
+                            _page_icons, changed_icons = (
+                                _resolve_channel_icons_for_streams(
+                                    channels, page_streams_by_ch
+                                )
+                            )
+                            if changed_icons:
+                                _on_icon_cache_changed(changed_icons)
                         else:
                             page_streams_by_ch = [[] for _ in channels]
 
@@ -3649,6 +4029,8 @@ def main() -> int:
     try:
         if args.display_fullscreen_test:
             return run_display_fullscreen_test(args.display_helper, args.display_replay)
+        if args.display_action_color_test:
+            return run_display_action_color_test(args.display_helper, args.display_replay)
         if args.display_object_test:
             return run_display_object_test(args.display_helper, args.display_replay)
         if args.display_protocol_test:
@@ -3671,6 +4053,8 @@ def main() -> int:
         background_image = load_background_path(args.config)
         display_mode = load_display_mode(args.config)
         fullscreen_image = load_fullscreen_image_path(args.config)
+        notepad_text = load_notepad_text(args.config)
+        notepad_style = load_notepad_style(args.config)
         show_volume_meters = load_show_volume_meters(args.config)
         meter_channel_mode = load_meter_channel_mode(args.config)
         meter_style = load_meter_style(args.config)
@@ -3693,6 +4077,8 @@ def main() -> int:
             background_image,
             display_mode,
             fullscreen_image,
+            notepad_text,
+            notepad_style,
             show_volume_meters,
             meter_channel_mode,
             meter_style,

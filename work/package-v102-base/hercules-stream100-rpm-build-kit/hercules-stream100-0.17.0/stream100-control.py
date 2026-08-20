@@ -27,7 +27,23 @@ CUSTOM_BUTTON_OVERLAY_PATH = CONFIG_PATH.with_name("button-overlay-custom.png")
 BUTTON_OVERLAY_TEMPLATE_PATH = APP_DIR / "button_labels_overlay_template.png"
 BUTTON_OVERLAY_SIZE = (480, 80)
 BUTTON_OVERLAY_STYLES = ("boxes", "basic", "glass", "custom")
-DISPLAY_MODES = ("mixer", "image")
+DISPLAY_MODES = ("mixer", "image", "notepad")
+NOTEPAD_FONT_FAMILIES = ("sans", "serif", "monospace")
+NOTEPAD_FONT_FAMILY_LABELS = ("Sans", "Serif", "Monospace")
+NOTEPAD_FONT_STYLES = ("regular", "bold", "italic", "bold-italic")
+NOTEPAD_FONT_STYLE_LABELS = ("Regular", "Bold", "Italic", "Bold italic")
+NOTEPAD_ALIGNMENTS = ("left", "center", "right")
+NOTEPAD_ALIGNMENT_LABELS = ("Left", "Centre", "Right")
+DEFAULT_NOTEPAD_TEXT_COLOUR = "#EFF4F9"
+MIN_NOTEPAD_FONT_SIZE = 10
+MAX_NOTEPAD_FONT_SIZE = 40
+DEFAULT_NOTEPAD_STYLE: dict[str, object] = {
+    "font_size": 0,
+    "font_family": "sans",
+    "font_style": "regular",
+    "text_color": DEFAULT_NOTEPAD_TEXT_COLOUR,
+    "alignment": "left",
+}
 DEFAULT_SHOW_VOLUME_METERS = True
 DEFAULT_SHOW_CHANNEL_ICONS = True
 VOLUME_METER_MODES = ("activity", "volume")
@@ -71,6 +87,10 @@ MIXER_RUNNER = APP_DIR / "run-stream100-mixer.sh"
 PACKAGED_MIXER_RUNNER = Path(
     "/usr/libexec/hercules-stream100/run-stream100-mixer.sh"
 )
+VIRTUAL_MIXER_RUNNER = APP_DIR / "run-stream100-virtual-mixer.sh"
+PACKAGED_VIRTUAL_MIXER_RUNNER = Path(
+    "/usr/libexec/hercules-stream100/run-stream100-virtual-mixer.sh"
+)
 DEFAULT_CHANNEL_COLOURS = ["#30CCBE", "#36D380", "#F6BE40", "#5B82F6"]
 DEFAULT_CHANNELS: list[dict[str, str]] = [
     {"kind": "default", "label": "Default output device", "color": DEFAULT_CHANNEL_COLOURS[0]},
@@ -82,6 +102,29 @@ DEFAULT_CHANNELS: list[dict[str, str]] = [
 
 def command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(arguments, check=False, capture_output=True, text=True)
+
+
+def find_virtual_mixer_runner(
+    local_runner: Path = VIRTUAL_MIXER_RUNNER,
+    packaged_runner: Path = PACKAGED_VIRTUAL_MIXER_RUNNER,
+) -> Path | None:
+    """Find the virtual mixer beside the GUI or in the packaged installation."""
+    for runner in (local_runner, packaged_runner):
+        if runner.is_file():
+            return runner
+    return None
+
+
+def launch_virtual_mixer(runner: Path | None = None) -> tuple[bool, str]:
+    """Start the independent virtual mixer from a GUI-safe session."""
+    selected = runner if runner is not None else find_virtual_mixer_runner()
+    if selected is None or not selected.is_file():
+        return False, "The virtual mixer launcher is missing."
+    try:
+        subprocess.Popen([str(selected)], start_new_session=True)
+    except OSError as error:
+        return False, f"Could not open the virtual mixer: {error}"
+    return True, "Virtual mixer opened with the saved pages."
 
 
 def parse_pipewire_applications(document: str) -> list[dict[str, str]]:
@@ -148,6 +191,38 @@ def normalise_colour(value: object, index: int) -> str:
     ):
         return text
     return DEFAULT_CHANNEL_COLOURS[index]
+
+
+def normalise_notepad_text_colour(value: object) -> str:
+    text = str(value).strip().upper()
+    if (
+        len(text) == 7
+        and text.startswith("#")
+        and all(character in "0123456789ABCDEF" for character in text[1:])
+    ):
+        return text
+    return DEFAULT_NOTEPAD_TEXT_COLOUR
+
+
+def normalise_notepad_style(value: object) -> dict[str, object]:
+    source = value if isinstance(value, dict) else {}
+    font_size = source.get("font_size", 0)
+    if (
+        isinstance(font_size, bool)
+        or not isinstance(font_size, (int, float))
+        or (font_size != 0 and not MIN_NOTEPAD_FONT_SIZE <= font_size <= MAX_NOTEPAD_FONT_SIZE)
+    ):
+        font_size = 0
+    family = source.get("font_family", "sans")
+    style = source.get("font_style", "regular")
+    alignment = source.get("alignment", "left")
+    return {
+        "font_size": int(font_size),
+        "font_family": family if family in NOTEPAD_FONT_FAMILIES else "sans",
+        "font_style": style if style in NOTEPAD_FONT_STYLES else "regular",
+        "text_color": normalise_notepad_text_colour(source.get("text_color")),
+        "alignment": alignment if alignment in NOTEPAD_ALIGNMENTS else "left",
+    }
 
 
 def normalise_channels(channels: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -335,6 +410,41 @@ def save_display_mode(mode: str) -> None:
             [dict(channel) for channel in DEFAULT_CHANNELS]
         )
     payload["display_mode"] = mode
+    write_config_payload(payload)
+
+
+def load_notepad_text() -> str:
+    value = read_config_payload().get("notepad_text", "")
+    if not isinstance(value, str):
+        return ""
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def save_notepad_text(text: str) -> None:
+    if not isinstance(text, str):
+        raise RuntimeError("Notepad content must be text")
+    payload = read_config_payload()
+    if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
+        payload["version"] = 1
+        payload["channels"] = normalise_channels(
+            [dict(channel) for channel in DEFAULT_CHANNELS]
+        )
+    payload["notepad_text"] = text.replace("\r\n", "\n").replace("\r", "\n")
+    write_config_payload(payload)
+
+
+def load_notepad_style() -> dict[str, object]:
+    return normalise_notepad_style(read_config_payload().get("notepad_style"))
+
+
+def save_notepad_style(style: object) -> None:
+    payload = read_config_payload()
+    if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
+        payload["version"] = 1
+        payload["channels"] = normalise_channels(
+            [dict(channel) for channel in DEFAULT_CHANNELS]
+        )
+    payload["notepad_style"] = normalise_notepad_style(style)
     write_config_payload(payload)
 
 
@@ -913,6 +1023,8 @@ def make_window_class(Gtk, GLib, Gdk):
             self.dropdowns: list[Any] = []
             self.colour_buttons: list[Any] = []
             self.display_mode = load_display_mode()
+            self.notepad_text = load_notepad_text()
+            self.notepad_style = load_notepad_style()
             self.show_volume_meters = load_show_volume_meters()
             self.meter_channel_mode = load_meter_channel_mode()
             self.meter_style = load_meter_style()
@@ -1196,7 +1308,7 @@ def make_window_class(Gtk, GLib, Gdk):
             mode_label.set_xalign(0)
             mode_label.set_hexpand(True)
             mode_row.append(mode_label)
-            mode_model = Gtk.StringList.new(["Mixer", "Full-screen image"])
+            mode_model = Gtk.StringList.new(["Mixer", "Full-screen image", "Notepad"])
             self.display_mode_dropdown = Gtk.DropDown(model=mode_model)
             self.display_mode_dropdown.set_selected(DISPLAY_MODES.index(self.display_mode))
             self.display_mode_dropdown.connect(
@@ -1205,7 +1317,7 @@ def make_window_class(Gtk, GLib, Gdk):
             mode_row.append(self.display_mode_dropdown)
             screen_box.append(mode_row)
             mode_hint = Gtk.Label(
-                label="Volume and mute controls continue working in either mode."
+                label="Volume, mute, and programmable-button controls continue working in every mode."
             )
             mode_hint.set_xalign(0)
             mode_hint.set_wrap(True)
@@ -1316,8 +1428,8 @@ def make_window_class(Gtk, GLib, Gdk):
             icons_description = Gtk.Label(
                 label=(
                     "Display a small icon badge at the top-right of each mixer "
-                    "column. Matches the assigned application or falls back to "
-                    "a representative emoji."
+                    "column. Uses the system icon theme for applications, "
+                    "inputs, and outputs with a crisp built-in fallback."
                 )
             )
             icons_description.set_xalign(0)
@@ -1473,6 +1585,137 @@ def make_window_class(Gtk, GLib, Gdk):
             self.fullscreen_image_box.append(fullscreen_hint)
             root.append(self.fullscreen_image_box)
 
+            self.notepad_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=6
+            )
+            notepad_title = Gtk.Label(label="Notepad")
+            notepad_title.set_xalign(0)
+            notepad_title.add_css_class("heading")
+            self.notepad_box.append(notepad_title)
+            notepad_hint = Gtk.Label(
+                label=(
+                    "Type or paste reference notes below, then choose formatting "
+                    "for the complete note. Auto-fit keeps long notes readable."
+                )
+            )
+            notepad_hint.set_xalign(0)
+            notepad_hint.set_wrap(True)
+            notepad_hint.add_css_class("dim-label")
+            self.notepad_box.append(notepad_hint)
+
+            notepad_format_grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+            family_label = Gtk.Label(label="Font")
+            family_label.set_xalign(0)
+            notepad_format_grid.attach(family_label, 0, 0, 1, 1)
+            self.notepad_font_family_dropdown = Gtk.DropDown(
+                model=Gtk.StringList.new(list(NOTEPAD_FONT_FAMILY_LABELS))
+            )
+            self.notepad_font_family_dropdown.set_selected(
+                NOTEPAD_FONT_FAMILIES.index(
+                    str(self.notepad_style["font_family"])
+                )
+            )
+            self.notepad_font_family_dropdown.set_hexpand(True)
+            notepad_format_grid.attach(
+                self.notepad_font_family_dropdown, 1, 0, 1, 1
+            )
+
+            style_label = Gtk.Label(label="Style")
+            style_label.set_xalign(0)
+            notepad_format_grid.attach(style_label, 2, 0, 1, 1)
+            self.notepad_font_style_dropdown = Gtk.DropDown(
+                model=Gtk.StringList.new(list(NOTEPAD_FONT_STYLE_LABELS))
+            )
+            self.notepad_font_style_dropdown.set_selected(
+                NOTEPAD_FONT_STYLES.index(str(self.notepad_style["font_style"]))
+            )
+            self.notepad_font_style_dropdown.set_hexpand(True)
+            notepad_format_grid.attach(
+                self.notepad_font_style_dropdown, 3, 0, 1, 1
+            )
+
+            size_label = Gtk.Label(label="Size")
+            size_label.set_xalign(0)
+            notepad_format_grid.attach(size_label, 0, 1, 1, 1)
+            size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            self.notepad_auto_size_check = Gtk.CheckButton(label="Auto-fit")
+            self.notepad_auto_size_check.set_active(
+                int(self.notepad_style["font_size"]) == 0
+            )
+            self.notepad_auto_size_check.connect(
+                "toggled", self.on_notepad_auto_size_changed
+            )
+            size_box.append(self.notepad_auto_size_check)
+            self.notepad_font_size_spin = Gtk.SpinButton.new_with_range(
+                MIN_NOTEPAD_FONT_SIZE, MAX_NOTEPAD_FONT_SIZE, 1
+            )
+            configured_font_size = int(self.notepad_style["font_size"])
+            self.notepad_font_size_spin.set_value(configured_font_size or 20)
+            self.notepad_font_size_spin.set_numeric(True)
+            self.notepad_font_size_spin.set_sensitive(configured_font_size != 0)
+            size_box.append(self.notepad_font_size_spin)
+            size_box.append(Gtk.Label(label="px"))
+            notepad_format_grid.attach(size_box, 1, 1, 1, 1)
+
+            alignment_label = Gtk.Label(label="Alignment")
+            alignment_label.set_xalign(0)
+            notepad_format_grid.attach(alignment_label, 2, 1, 1, 1)
+            self.notepad_alignment_dropdown = Gtk.DropDown(
+                model=Gtk.StringList.new(list(NOTEPAD_ALIGNMENT_LABELS))
+            )
+            self.notepad_alignment_dropdown.set_selected(
+                NOTEPAD_ALIGNMENTS.index(str(self.notepad_style["alignment"]))
+            )
+            self.notepad_alignment_dropdown.set_hexpand(True)
+            notepad_format_grid.attach(
+                self.notepad_alignment_dropdown, 3, 1, 1, 1
+            )
+
+            colour_label = Gtk.Label(label="Text colour")
+            colour_label.set_xalign(0)
+            notepad_format_grid.attach(colour_label, 0, 2, 1, 1)
+            if hasattr(Gtk, "ColorDialogButton"):
+                notepad_colour_dialog = Gtk.ColorDialog()
+                notepad_colour_dialog.set_title("Choose the Notepad text colour")
+                self.notepad_colour_button = Gtk.ColorDialogButton.new(
+                    notepad_colour_dialog
+                )
+            else:
+                self.notepad_colour_button = Gtk.ColorButton()
+                self.notepad_colour_button.set_title(
+                    "Choose the Notepad text colour"
+                )
+            notepad_rgba = Gdk.RGBA()
+            notepad_rgba.parse(str(self.notepad_style["text_color"]))
+            self.notepad_colour_button.set_rgba(notepad_rgba)
+            self.notepad_colour_button.set_size_request(70, 36)
+            notepad_format_grid.attach(self.notepad_colour_button, 1, 2, 1, 1)
+            self.notepad_box.append(notepad_format_grid)
+
+            notepad_scroller = Gtk.ScrolledWindow()
+            notepad_scroller.set_policy(
+                Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC
+            )
+            notepad_scroller.set_min_content_height(150)
+            self.notepad_buffer = Gtk.TextBuffer()
+            self.notepad_buffer.set_text(self.notepad_text)
+            self.notepad_buffer.connect("changed", self.on_notepad_text_changed)
+            self.notepad_view = Gtk.TextView(buffer=self.notepad_buffer)
+            self.notepad_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            self.notepad_view.set_left_margin(10)
+            self.notepad_view.set_right_margin(10)
+            self.notepad_view.set_top_margin(8)
+            self.notepad_view.set_bottom_margin(8)
+            notepad_scroller.set_child(self.notepad_view)
+            self.notepad_box.append(notepad_scroller)
+            self.notepad_status = Gtk.Label(label="")
+            self.notepad_status.set_xalign(0)
+            self.notepad_status.set_wrap(True)
+            self.notepad_status.add_css_class("dim-label")
+            self.notepad_box.append(self.notepad_status)
+            self.update_notepad_status()
+            root.append(self.notepad_box)
+
             self.background_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=6
             )
@@ -1534,6 +1777,12 @@ def make_window_class(Gtk, GLib, Gdk):
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
             actions.set_halign(Gtk.Align.END)
             root.append(actions)
+            virtual_mixer_button = Gtk.Button(label="Open virtual mixer")
+            virtual_mixer_button.set_tooltip_text(
+                "Open a mouse-controlled mixer for the saved pages"
+            )
+            virtual_mixer_button.connect("clicked", self.on_virtual_mixer_clicked)
+            actions.append(virtual_mixer_button)
             self.power_button = Gtk.Button(label="Start mixer")
             self.power_button.connect("clicked", self.on_power_clicked)
             actions.append(self.power_button)
@@ -1596,11 +1845,65 @@ def make_window_class(Gtk, GLib, Gdk):
         def update_mode_controls(self) -> None:
             self.background_box.set_sensitive(self.display_mode == "mixer")
             self.fullscreen_image_box.set_sensitive(self.display_mode == "image")
+            self.notepad_box.set_sensitive(self.display_mode == "notepad")
             self.volume_meter_row.set_sensitive(self.display_mode == "mixer")
             self.meter_channel_mode_row.set_sensitive(
                 self.display_mode == "mixer"
             )
             self.meter_style_row.set_sensitive(self.display_mode == "mixer")
+
+        def update_notepad_status(self) -> None:
+            character_count = len(self.notepad_text)
+            if character_count:
+                message = (
+                    f"{character_count:,} characters. Select Apply changes to "
+                    "save the text and formatting, then update the controller."
+                )
+            else:
+                message = (
+                    "An empty note shows a short prompt on the controller. "
+                    "Select Apply changes after editing."
+                )
+            self.notepad_status.set_text(message)
+
+        def on_notepad_auto_size_changed(self, check_button) -> None:
+            self.notepad_font_size_spin.set_sensitive(
+                not check_button.get_active()
+            )
+
+        def selected_notepad_style(self) -> dict[str, object]:
+            family_index = self.notepad_font_family_dropdown.get_selected()
+            style_index = self.notepad_font_style_dropdown.get_selected()
+            alignment_index = self.notepad_alignment_dropdown.get_selected()
+            if family_index >= len(NOTEPAD_FONT_FAMILIES):
+                family_index = 0
+            if style_index >= len(NOTEPAD_FONT_STYLES):
+                style_index = 0
+            if alignment_index >= len(NOTEPAD_ALIGNMENTS):
+                alignment_index = 0
+            rgba = self.notepad_colour_button.get_rgba()
+            return normalise_notepad_style(
+                {
+                    "font_size": (
+                        0
+                        if self.notepad_auto_size_check.get_active()
+                        else self.notepad_font_size_spin.get_value_as_int()
+                    ),
+                    "font_family": NOTEPAD_FONT_FAMILIES[family_index],
+                    "font_style": NOTEPAD_FONT_STYLES[style_index],
+                    "text_color": "#{:02X}{:02X}{:02X}".format(
+                        round(rgba.red * 255),
+                        round(rgba.green * 255),
+                        round(rgba.blue * 255),
+                    ),
+                    "alignment": NOTEPAD_ALIGNMENTS[alignment_index],
+                }
+            )
+
+        def on_notepad_text_changed(self, text_buffer) -> None:
+            start, end = text_buffer.get_bounds()
+            self.notepad_text = text_buffer.get_text(start, end, True)
+            self.update_notepad_status()
 
         def on_display_mode_changed(self, dropdown, _parameter) -> None:
             selected = dropdown.get_selected()
@@ -2066,6 +2369,9 @@ def make_window_class(Gtk, GLib, Gdk):
             save_meter_channel_mode(self.meter_channel_mode)
             save_meter_style(self.meter_style)
             save_volume_meter_mode("activity")
+            save_notepad_text(self.notepad_text)
+            self.notepad_style = self.selected_notepad_style()
+            save_notepad_style(self.notepad_style)
             if service_property("ActiveState") == "active":
                 service_action("restart")
                 self.show_message("Changes saved and the mixer restarted.")
@@ -2083,6 +2389,10 @@ def make_window_class(Gtk, GLib, Gdk):
             self.capture_current_page()
             self.refresh_applications()
 
+        def on_virtual_mixer_clicked(self, _button) -> None:
+            launched, message = launch_virtual_mixer()
+            self.show_message(message, error=not launched)
+
         def on_power_clicked(self, _button) -> None:
             try:
                 if service_property("ActiveState") == "active":
@@ -2096,6 +2406,9 @@ def make_window_class(Gtk, GLib, Gdk):
                     save_meter_channel_mode(self.meter_channel_mode)
                     save_meter_style(self.meter_style)
                     save_volume_meter_mode("activity")
+                    save_notepad_text(self.notepad_text)
+                    self.notepad_style = self.selected_notepad_style()
+                    save_notepad_style(self.notepad_style)
                     if not device_connected():
                         raise RuntimeError("Connect the Stream 100 before starting the mixer.")
                     service_action("start")

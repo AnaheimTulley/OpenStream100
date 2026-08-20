@@ -6,7 +6,7 @@ column in the hardware mixer view.  Resolution order is:
     1. GTK icon theme lookup by ``application.id`` (e.g. ``org.videolan.VLC``)
     2. GTK icon theme lookup by ``application.name`` (lowercased, no spaces)
     3. Flatpak appstream catalog search for icons at any available size
-    4. Emoji fallback keyed to channel kind / property pair
+    4. Crisp built-in vector glyphs for audio roles and unknown applications
 
 All public functions return either a :class:`PIL.Image.Image` or ``None``.
 """
@@ -25,9 +25,14 @@ from typing import Any, Optional
 def _try_import_gtk() -> bool:
     """Return True when GTK4 + GdkPixbuf are available."""
     try:
-        from gi.repository import GdkPixbuf, Gtk  # noqa: F401
+        import gi
+
+        gi.require_version("Gdk", "4.0")
+        gi.require_version("GdkPixbuf", "2.0")
+        gi.require_version("Gtk", "4.0")
+        from gi.repository import Gdk, GdkPixbuf, Gtk  # noqa: F401
         return True
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError, ValueError):
         return False
 
 
@@ -76,9 +81,130 @@ def _get_emoji(kind: str, prop: str | None = None) -> str | None:
     return None
 
 
+def _icon_name_variants(value: object) -> list[str]:
+    """Generate GTK icon-name variants while preserving Flatpak ID case."""
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    if raw.endswith(".desktop"):
+        raw = raw[:-8]
+    values = [raw, raw.lower()]
+    for item in tuple(values):
+        values.extend(
+            [
+                item.rsplit(".", 1)[-1],
+                item.replace(".", "-"),
+                item.replace("_", "-"),
+                item.replace(" ", "-"),
+                item.replace(" ", "").lower(),
+            ]
+        )
+    result: list[str] = []
+    for item in values:
+        candidate = item.strip()
+        if candidate and candidate not in result:
+            result.append(candidate)
+    return result
+
+
+def channel_icon_role(channel: dict[str, Any]) -> str:
+    """Return the generic visual role for an assigned mixer channel."""
+    kind = str(channel.get("kind", "")).lower()
+    description = " ".join(
+        str(channel.get(key, "")).lower()
+        for key in ("label", "property", "value")
+    )
+    if kind == "disabled":
+        return "muted"
+    if kind in {"microphone", "input", "source"} or any(
+        word in description for word in ("microphone", " mic ", "input", "capture")
+    ):
+        return "microphone"
+    if kind in {"default", "speaker", "output", "sink", "system"} or any(
+        word in description for word in ("speaker", "output", "playback")
+    ):
+        return "speaker"
+    return "application"
+
+
+def channel_icon_candidates(
+    channel: dict[str, Any], streams: list[dict[str, Any]]
+) -> list[str]:
+    """Return the icon-theme candidates shared by both mixer displays."""
+    role = channel_icon_role(channel)
+    role_candidates = {
+        "speaker": ["audio-speakers-symbolic", "audio-card-symbolic"],
+        "microphone": [
+            "audio-input-microphone-symbolic",
+            "audio-card-symbolic",
+        ],
+        "muted": ["audio-volume-muted-symbolic"],
+    }
+    if role in role_candidates:
+        return role_candidates[role]
+
+    values: list[object] = [
+        channel.get("application_id"),
+        channel.get("value"),
+        channel.get("label"),
+    ]
+    for stream in streams:
+        props = stream.get("props", {})
+        if isinstance(props, dict):
+            values.extend(
+                [
+                    props.get("application.icon-name"),
+                    props.get("application.id"),
+                    props.get("application.process.binary"),
+                    props.get("application.name"),
+                ]
+            )
+    candidates: list[str] = []
+    for value in values:
+        for candidate in _icon_name_variants(value):
+            if candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
+
+
 # ---------------------------------------------------------------------------
 # GTK icon lookup helpers
 # ---------------------------------------------------------------------------
+
+def _load_icon_file(path: Path, size: int):
+    """Rasterize a PNG, SVG, or XPM file to a normalized PIL RGBA image."""
+    if not _try_import_pil():
+        return None
+    try:
+        import gi
+
+        gi.require_version("GdkPixbuf", "2.0")
+        from gi.repository import GdkPixbuf
+        from PIL import Image as PILImage
+
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+            str(path), size, size, True
+        )
+        mode = "RGBA" if pixbuf.get_has_alpha() else "RGB"
+        pixels = bytes(pixbuf.read_pixel_bytes().get_data())
+        image = PILImage.frombytes(
+            mode,
+            (pixbuf.get_width(), pixbuf.get_height()),
+            pixels,
+            "raw",
+            mode,
+            pixbuf.get_rowstride(),
+            1,
+        ).convert("RGBA")
+        return _normalise_icon(image, size)
+    except (ImportError, OSError, RuntimeError, ValueError):
+        try:
+            from PIL import Image as PILImage
+
+            with PILImage.open(path) as opened:
+                return _normalise_icon(opened, size)
+        except (OSError, ValueError):
+            return None
 
 def _load_icon_via_gtk(
     icon_name: str, size: int = 24
@@ -90,53 +216,41 @@ def _load_icon_via_gtk(
     if not _try_import_gtk():
         return None
     try:
-        import gi  # noqa: F401 — required before repository import
-        gi.require_version('GdkPixbuf', '2.0')
-        gi.require_version('Gtk', '4.0')
-        from gi.repository import GdkPixbuf, Gtk  # noqa: F401
+        from gi.repository import Gdk, Gtk
 
-        if not _try_import_pil():
+        display = Gdk.Display.get_default()
+        if display is None or not _try_import_pil():
+            return None
+        theme = Gtk.IconTheme.get_for_display(display)
+        if not theme.has_icon(icon_name):
+            return None
+        flags = (
+            Gtk.IconLookupFlags.FORCE_SYMBOLIC
+            if icon_name.endswith("-symbolic")
+            else Gtk.IconLookupFlags.FORCE_REGULAR
+        )
+        paintable = theme.lookup_icon(
+            icon_name,
+            None,
+            size,
+            1,
+            Gtk.TextDirection.NONE,
+            flags,
+        )
+        icon_file = paintable.get_file() if paintable is not None else None
+        icon_path = icon_file.get_path() if icon_file is not None else None
+        if not icon_path:
             return None
         from PIL import Image as PILImage
-        import io
 
-        theme = Gtk.IconTheme.get_default()
-        # List available icons for debugging
-        all_icons = theme.list_icons() if theme else []
-        
-        pixbuf = theme.load_icon(icon_name, size, 0)
-        if pixbuf is None:
-            # Try loading with GIcon fallback
-            try:
-                gicon_name = icon_name.replace("-", "-")
-                from gi.repository import Gio
-                gicon = Gio.ThemedIcon.new(gicon_name)
-                if gicon:
-                    pixbuf = GdkPixbuf.Pixbuf.new_from_resource_at_scale(
-                        f"/org/gtk/libgtk/icons/{gicon_name}.png",
-                        size, size, True
-                    )
-            except Exception:
-                pass
-            if pixbuf is None:
-                return None
-        # Convert GdkPixbuf → PIL Image
-        w = pixbuf.get_width()
-        h = pixbuf.get_height()
-        n_channels = pixbuf.get_n_channels()
-        data = pixbuf.get_pixels_array()
-        if n_channels == 4:
-            pil_img = PILImage.frombuffer(
-                "RGBA", (w, h), data, "raw", "RGBA", 0, 1
-            )
-        else:
-            pil_img = PILImage.frombuffer(
-                "RGB", (w, h), data, "raw", "RGB", 0, 1
-            )
-        # Ensure RGBA for compositing
-        if pil_img.mode != "RGBA":
-            pil_img = pil_img.convert("RGBA")
-        return pil_img
+        image = _load_icon_file(Path(icon_path), size)
+        if image is None:
+            return None
+        if icon_name.endswith("-symbolic"):
+            alpha = image.getchannel("A")
+            image = PILImage.new("RGBA", image.size, (239, 244, 249, 0))
+            image.putalpha(alpha)
+        return image
     except Exception:
         return None
 
@@ -275,6 +389,56 @@ def _find_icon_in_flatpak_appstream(
 # Application metadata (fallback when GTK is unavailable)
 # ---------------------------------------------------------------------------
 
+def _find_freedesktop_icon(
+    icon_name: str,
+    size: int = 24,
+    extensions: tuple[str, ...] = ("png", "svg", "xpm"),
+):
+    """Load an icon from system, user, or Flatpak freedesktop directories."""
+    direct = Path(icon_name).expanduser()
+    if direct.is_file():
+        return _load_icon_file(direct, size)
+
+    roots = (
+        Path.home() / ".local/share/icons",
+        Path.home() / ".icons",
+        Path.home() / ".local/share/flatpak/exports/share/icons",
+        Path("/usr/local/share/icons"),
+        Path("/usr/share/icons"),
+        Path("/var/lib/flatpak/exports/share/icons"),
+    )
+    available_sizes = {16, 22, 24, 32, 48, 64, 96, 128, 256, 512, size}
+    sizes = sorted(
+        available_sizes,
+        key=lambda candidate: (candidate < size, abs(candidate - size)),
+    )
+    categories = ("apps", "devices", "status", "mimetypes")
+    for root in roots:
+        if not root.is_dir():
+            continue
+        patterns: list[str] = []
+        for extension in extensions:
+            for icon_size in sizes:
+                for category in categories:
+                    patterns.append(
+                        f"*/{icon_size}x{icon_size}/{category}/{icon_name}.{extension}"
+                    )
+            for category in categories:
+                patterns.append(f"*/scalable/{category}/{icon_name}.{extension}")
+                patterns.append(f"*/symbolic/{category}/{icon_name}.{extension}")
+        for pattern in patterns:
+            for candidate in root.glob(pattern):
+                image = _load_icon_file(candidate, size)
+                if image is not None:
+                    return image
+    for suffix in extensions:
+        candidate = Path("/usr/share/pixmaps") / f"{icon_name}.{suffix}"
+        if candidate.is_file():
+            image = _load_icon_file(candidate, size)
+            if image is not None:
+                return image
+    return None
+
 def _find_app_icon_via_desktop_entry(
     app_id: str, size: int = 24
 ) -> Optional["PIL.Image.Image"]:  # noqa: F821
@@ -285,6 +449,9 @@ def _find_app_icon_via_desktop_entry(
 
     # Extract the base name (e.g., "firefox" from "firefox.desktop")
     base_name = Path(app_id).stem
+    image = _find_freedesktop_icon(base_name, size)
+    if image is not None:
+        return image
     
     candidates = [
         Path(f"/usr/share/icons/hicolor/{size}x{size}/apps/{base_name}.png"),
@@ -391,34 +558,12 @@ def _find_app_icon_via_desktop_entry(
 
 def _find_png_in_hicolor_apps(icon_name: str, size: int = 24) -> Optional["PIL.Image.Image"]:  # noqa: F821
     """Search all hicolor icon sizes for a PNG icon in the 'apps' directory."""
-    if not _try_import_pil():
-        return None
-    from PIL import Image as PILImage
-
-    for icon_size in [size, 16, 24, 32, 48, 64, 96, 128, 256, 512]:
-        candidate = Path(f"/usr/share/icons/hicolor/{icon_size}x{icon_size}/apps/{icon_name}.png")
-        if candidate.exists():
-            try:
-                return PILImage.open(str(candidate)).convert("RGBA")
-            except Exception:
-                continue
-    return None
+    return _find_freedesktop_icon(icon_name, size, ("png",))
 
 
 def _find_svg_in_hicolor_apps(icon_name: str, size: int = 24) -> Optional["PIL.Image.Image"]:  # noqa: F821
     """Search all hicolor icon sizes for an SVG icon in the 'apps' directory."""
-    if not _try_import_pil():
-        return None
-    from PIL import Image as PILImage
-
-    for icon_size in [size, 16, 24, 32, 48, 64, 96, 128, 256, 512]:
-        svg_candidate = Path(f"/usr/share/icons/hicolor/{icon_size}x{icon_size}/apps/{icon_name}.svg")
-        if svg_candidate.exists():
-            try:
-                return PILImage.open(str(svg_candidate)).convert("RGBA")
-            except Exception:
-                continue
-    return None
+    return _find_freedesktop_icon(icon_name, size, ("svg",))
 
 
 def _find_app_icon_via_icon_name(icon_name: str, size: int = 24) -> Optional["PIL.Image.Image"]:  # noqa: F821
@@ -699,7 +844,141 @@ def _find_app_icon_by_name(app_name: str, size: int = 24) -> Optional["PIL.Image
 
 
 # ---------------------------------------------------------------------------
-# Emoji fallback rendering — draws emoji onto a PIL Image
+# Generic vector fallbacks — crisp even without a graphical GTK session
+# ---------------------------------------------------------------------------
+
+def _normalise_icon(image, size: int):
+    """Fit an RGBA icon into an exact square without stretching it."""
+    from PIL import Image as PILImage
+
+    opened = image.convert("RGBA").copy()
+    opened.thumbnail((size, size), PILImage.Resampling.LANCZOS)
+    canvas = PILImage.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas.alpha_composite(
+        opened,
+        ((size - opened.width) // 2, (size - opened.height) // 2),
+    )
+    return canvas
+
+
+def _draw_generic_channel_icon(role: str, size: int = 24):
+    """Draw a small anti-aliased audio glyph when no theme icon is available."""
+    from PIL import Image as PILImage, ImageDraw
+
+    scale = 4
+    base_size = 24
+    extent = base_size * scale
+    image = PILImage.new("RGBA", (extent, extent), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    light = (239, 244, 249, 255)
+    muted = (217, 77, 94, 255)
+    line = max(scale, round(base_size * scale / 11))
+
+    if role in {"speaker", "muted"}:
+        draw.rounded_rectangle(
+            (2 * scale, 9 * scale, 7 * scale, 15 * scale),
+            radius=scale,
+            fill=light,
+        )
+        draw.polygon(
+            [
+                (6 * scale, 9 * scale),
+                (13 * scale, 4 * scale),
+                (13 * scale, 20 * scale),
+                (6 * scale, 15 * scale),
+            ],
+            fill=light,
+        )
+        if role == "speaker":
+            draw.arc(
+                (9 * scale, 6 * scale, 20 * scale, 18 * scale),
+                -52,
+                52,
+                fill=light,
+                width=line,
+            )
+            draw.arc(
+                (8 * scale, 3 * scale, 24 * scale, 21 * scale),
+                -48,
+                48,
+                fill=light,
+                width=line,
+            )
+        else:
+            draw.line(
+                (15 * scale, 8 * scale, 22 * scale, 16 * scale),
+                fill=muted,
+                width=line,
+            )
+            draw.line(
+                (22 * scale, 8 * scale, 15 * scale, 16 * scale),
+                fill=muted,
+                width=line,
+            )
+    elif role == "microphone":
+        draw.rounded_rectangle(
+            (8 * scale, 2 * scale, 16 * scale, 15 * scale),
+            radius=4 * scale,
+            fill=light,
+        )
+        draw.arc(
+            (5 * scale, 8 * scale, 19 * scale, 21 * scale),
+            0,
+            180,
+            fill=light,
+            width=line,
+        )
+        draw.line(
+            (12 * scale, 18 * scale, 12 * scale, 22 * scale),
+            fill=light,
+            width=line,
+        )
+        draw.line(
+            (8 * scale, 22 * scale, 16 * scale, 22 * scale),
+            fill=light,
+            width=line,
+        )
+    else:
+        draw.rounded_rectangle(
+            (2 * scale, 3 * scale, 22 * scale, 21 * scale),
+            radius=2 * scale,
+            outline=light,
+            width=line,
+        )
+        draw.line(
+            (3 * scale, 8 * scale, 21 * scale, 8 * scale),
+            fill=light,
+            width=line,
+        )
+        for x in (6, 10, 14):
+            draw.ellipse(
+                (x * scale, 5 * scale, (x + 1) * scale, 6 * scale),
+                fill=light,
+            )
+
+    return image.resize((size, size), PILImage.Resampling.LANCZOS)
+
+
+def load_channel_fallback_icon(
+    channel: dict[str, Any], icon_size: int = 24
+) -> "PIL.Image.Image":  # noqa: F821
+    """Return a themed or vector generic icon without using emoji glyphs."""
+    role = channel_icon_role(channel)
+    candidates = {
+        "speaker": ["audio-speakers-symbolic", "audio-card-symbolic"],
+        "microphone": ["audio-input-microphone-symbolic"],
+        "muted": ["audio-volume-muted-symbolic"],
+        "application": ["application-x-executable-symbolic"],
+    }[role]
+    for candidate in candidates:
+        image = _load_icon_via_gtk(candidate, icon_size)
+        if image is not None:
+            return _normalise_icon(image, icon_size)
+    return _draw_generic_channel_icon(role, icon_size)
+
+
+# ---------------------------------------------------------------------------
+# Emoji fallback rendering — retained for older callers
 # ---------------------------------------------------------------------------
 
 def _render_emoji_icon(
@@ -746,7 +1025,7 @@ def _render_emoji_icon(
 # Public API — these are the functions imported by stream100-mixer-alpha.py
 # ---------------------------------------------------------------------------
 
-def load_channel_icon(
+def _resolve_application_icon(
     channel: dict[str, Any],
     streams: list[dict[str, Any]],
     icon_size: int = 24,
@@ -756,33 +1035,12 @@ def load_channel_icon(
     Returns None when no icon can be found — the caller should fall back to
     :func:`get_icon_name` + :func:`load_emoji_fallback`.
     """
-    # DEBUG: stream100-icon-logger — logs resolution path to /tmp/stream100_icon_debug.log
-    _icon_debug_fh = None
-    try:
-        _icon_debug_fh = open("/tmp/stream100_icon_debug.log", "a", encoding="utf-8")
-        _icon_debug_fh.write(
-            f"ICON channel={channel.get('label','')} kind={channel.get('kind','')} "
-            f"app_id={channel.get('application_id','<none>')} streams_len={len(streams)}\n"
-        )
-        for s in streams:
-            _icon_debug_fh.write(
-                f"  stream label={s.get('label','')} props.app.id={s.get('props',{}).get('application.id','<none>')} "
-                f"props.app.name={s.get('props',{}).get('application.name','<none>')}\n"
-            )
-    except Exception:
-        pass
-
-    def _write_icon_debug(msg: str) -> None:
-        try:
-            if _icon_debug_fh is not None:
-                _icon_debug_fh.write(msg + "\n")
-                _icon_debug_fh.flush()
-        except Exception:
-            pass
+    def _write_icon_debug(_message: str) -> None:
+        return
 
 
     app_id = (
-        str(channel.get("application_id", "")).lower()
+        str(channel.get("application_id", "")).strip()
         if channel.get("kind") == "application"
         else ""
     )
@@ -860,6 +1118,29 @@ def load_channel_icon(
 
     _write_icon_debug("NO ICON FOUND — falling back to emoji")
     return None
+
+
+def load_channel_icon(
+    channel: dict[str, Any],
+    streams: list[dict[str, Any]],
+    icon_size: int = 24,
+) -> "PIL.Image.Image":  # noqa: F821
+    """Resolve a normalized icon shared by the hardware and virtual mixers."""
+    for candidate in channel_icon_candidates(channel, streams):
+        candidate_path = Path(candidate)
+        if candidate_path.is_file():
+            image = _load_icon_file(candidate_path, icon_size)
+            if image is not None:
+                return image
+        image = _load_icon_via_gtk(candidate, icon_size)
+        if image is not None:
+            return _normalise_icon(image, icon_size)
+
+    if channel.get("kind") == "application":
+        image = _resolve_application_icon(channel, streams, icon_size)
+        if image is not None:
+            return _normalise_icon(image, icon_size)
+    return load_channel_fallback_icon(channel, icon_size)
 
 
 def get_icon_name(

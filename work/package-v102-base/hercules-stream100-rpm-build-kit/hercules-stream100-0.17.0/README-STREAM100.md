@@ -3,7 +3,7 @@
 OpenStream100 provides up to eight pages of four per-application PipeWire volume controls for the
 Hercules Stream 100, four soft-mute buttons, four programmable action buttons
 with LEDs, saved channel assignments and colours, custom display images, and a
-live full-screen 480x272 display with Mixer and Full-screen image modes.
+live full-screen 480x272 display with Mixer, Full-screen image, and Notepad modes.
 
 Hercules is a trademark of Guillemot Corporation. This independent Linux
 project is not affiliated with or endorsed by Guillemot Corporation.
@@ -23,7 +23,7 @@ personal installation:
 
 The migration moves the previous application directory into a recoverable
 backup under `~/.local/share`; it retains assignments, colours, imported
-images, the selected display mode, and button calibration.
+images, notepad text, the selected display mode, and button calibration.
 The sections below describe the portable beta installer, which remains useful
 as a rollback and development build.
 
@@ -80,10 +80,13 @@ panel. It does not need administrator access. The control panel provides:
 - Adjustable 0.5% to 4.0% knob sensitivity
 - Optional live meters with selectable Mono/Stereo monitoring and four visualiser styles
 - Four programmable buttons with automatic LED illumination
-- Mixer and Full-screen image display modes
+- Mixer, Full-screen image, and editable Notepad display modes
+- Saved Notepad font size, family, style, text colour, and alignment controls
 - Separate imported images for the mixer background and full-screen artwork
+- Crisp theme icons for applications, outputs, inputs, and muted channels
 - Built-in and user-designed button-label overlays with an exportable template
 - Controller and mixer status
+- A separate mouse-controlled virtual mixer window
 - **Start mixer** and **Stop mixer** buttons
 - An **Apply changes** button
 - Optional automatic startup when you sign in
@@ -125,11 +128,44 @@ control their assigned audio, but mixer labels and percentage badges stay hidden
 so the artwork owns the entire display. Switch back to **Mixer** and apply the
 change to restore the live mixer screen. Image mode also disables the firmware's
 three lower action-zone dividers, leaving a clean edge-to-edge picture.
+
+Choose **Notepad** to type or paste a reference note into the multiline editor,
+then select **Apply changes**. The note is saved in the normal configuration and
+rendered as a high-contrast full-screen card. OpenStream100 preserves explicit
+line breaks and wraps long lines. Formatting controls provide automatic fitting
+or a fixed 10–40 px size, Sans/Serif/Monospace families, Regular/Bold/Italic/
+Bold Italic styles, any text colour, and Left/Centre/Right alignment. Notes too
+long for the chosen size are shortened with an ellipsis. As in Full-screen image
+mode, mixer labels, meters, percentage badges, and action-zone dividers remain
+hidden while the four encoders, mute controls, programmable buttons, and LEDs
+continue working.
 Existing channel and button settings remain in:
 
 ```text
 ~/.config/hercules-stream100/config.json
 ```
+
+Select **Open virtual mixer** at the bottom of the control panel to operate the
+saved pages from the desktop. The window provides four vertical volume faders,
+soft mute/unmute controls, previous/next page navigation, and the same four
+saved programmable actions. Channel cards show the same resolved application or
+device icons used by the hardware display, and their colours and text follow the
+active GTK light or dark system theme. It discovers active PipeWire targets and
+volume changes once per second, automatically reloads saved configuration changes,
+and continues to work when the Hercules controller is disconnected. The initial
+implementation keeps its selected page local to the window; synchronising page
+and mute state with a simultaneously running hardware mixer is planned for the
+next iteration.
+
+The virtual mixer also uses the saved hardware mixer background with the same
+darkened readability treatment and translucent channel columns. The image and
+clear buttons in its header update the shared background preference. Each channel
+has an interactive twin-bar visualiser using the saved Mono/Stereo and Classic,
+Segmented, Rounded, or Slim preferences. Coloured bars show live PipeWire activity
+and the white marker shows volume; click, drag, or scroll on a meter to change it.
+The window keeps the hardware display's 480:272 aspect ratio. Drag the ridged
+lower-right corner to make the complete mixer larger or smaller; at its compact
+size, labels and spacing tighten automatically so no controls are cut off.
 
 Under **Mixer pages**, add up to eight pages and select which page to edit.
 Each page stores its own four application assignments, colours, programmable
@@ -170,7 +206,7 @@ framebuffer and do not redraw the framebuffer at audio rate.
 Use the **Screen brightness** slider to set the hardware display from 10% to
 100% in five-percent steps. The setting is saved immediately and a running
 mixer applies it live through the controller's native backlight command, without
-redrawing or blanking the screen. Mixer and Full-screen image modes share the
+redrawing or blanking the screen. Mixer, Full-screen image, and Notepad modes share the
 setting. The branded startup logo deliberately retains its separate
 hardware-validated brightness so startup remains clean and legible.
 
@@ -204,7 +240,7 @@ appear complete at normal brightness as a clean **Starting** screen
 with an initialization bar. Because
 this controller exposes full-frame planes while
 they upload, OpenStream100 briefly darkens the panel for the final handoff and
-reveals the completed saved Mixer or Full-screen image. Both frames deliberately
+reveals the completed saved Mixer, Full-screen image, or Notepad view. All frames deliberately
 share one hardware palette. Normal operation keeps the LCD active with
 the native two-packet heartbeat captured from the Windows driver.
 It uses the hardware-validated action-zone style 1 and resets the inherited

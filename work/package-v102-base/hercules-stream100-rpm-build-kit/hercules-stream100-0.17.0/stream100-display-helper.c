@@ -1501,7 +1501,8 @@ static int read_native_metadata(const unsigned char *frame,
         *muted_mask = metadata[8];
         *online_mask = metadata[9] & 0x0fu;
         *display_mode = metadata[10] == 2 ? 2 :
-            (metadata[10] == 3 ? 3 : (metadata[10] == 4 ? 4 : 1));
+            (metadata[10] == 3 ? 3 :
+             (metadata[10] == 4 ? 4 : (metadata[10] == 5 ? 5 : 1)));
         memcpy(channel_colors, metadata + 12, 12);
         const unsigned char encoded_meter_style = metadata[28] >> 4;
         *meter_style = encoded_meter_style < MAX_METER_STYLE
@@ -1959,12 +1960,35 @@ static int activate_fullscreen_layout(libusb_context *context,
 static int activate_fullscreen_image_layout(libusb_context *context,
                                             libusb_device_handle *device,
                                             uint16_t *next_sequence) {
-    /* The 0.4.2 hardware test proved that black RGB disables the three lower
-     * action-zone dividers in image mode.  The validated mixer layout retains
-     * its original white action-zone value. */
+    /* Image mode retains the established black action-zone decoration. */
     int result = send_display_configuration(
         context, device,
         0xffffffffu, 0xffffffffu, 1, 0x00000000u,
+        next_sequence);
+    if (result != LIBUSB_SUCCESS) {
+        return result;
+    }
+    sleep_ms(NATIVE_MESSAGE_GAP_MS);
+    result = send_native_panel_state(
+        context, device, 1, DEFAULT_METER_STYLE, next_sequence);
+    if (result != LIBUSB_SUCCESS) {
+        return result;
+    }
+    sleep_ms(NATIVE_MESSAGE_GAP_MS);
+    return set_native_meter_surfaces(
+        context, device, 0, 0, DEFAULT_METER_STYLE, NULL, next_sequence);
+}
+
+static int activate_notepad_layout(libusb_context *context,
+                                   libusb_device_handle *device,
+                                   uint16_t *next_sequence) {
+    /* Hardware colour phases confirmed that SDK ARGB #181F2A makes the three
+     * firmware-owned action-zone separators blend into the Notepad card. Keep
+     * this mode separate from arbitrary full-screen images, whose pixels may
+     * use unrelated colours beneath the action zone. */
+    int result = send_display_configuration(
+        context, device,
+        0xffffffffu, 0xffffffffu, 1, 0xff181f2au,
         next_sequence);
     if (result != LIBUSB_SUCCESS) {
         return result;
@@ -2057,15 +2081,84 @@ static int run_fullscreen_style_test(libusb_context *context,
     return restore_result;
 }
 
+static int run_action_zone_color_test(libusb_context *context,
+                                      libusb_device_handle *device,
+                                      uint16_t *next_sequence) {
+    /* The Notepad card is authored as RGB 24,31,42 and reaches the panel as
+     * RGB565 24,28,41.  Exercise the RGB/alpha packings used by the Windows
+     * SDK so the firmware-drawn separators can be matched empirically. */
+    static const uint32_t colors[6] = {
+        0xff181f2au, /* Qt ARGB, authored card colour. */
+        0x002a1f18u, /* Windows COLORREF, authored card colour. */
+        0xff181c29u, /* Qt ARGB, RGB565 card colour. */
+        0x00291c18u, /* Windows COLORREF, RGB565 card colour. */
+        0x00181f2au, /* Plain 0xRRGGBB, authored card colour. */
+        0x00181c29u, /* Plain 0xRRGGBB, RGB565 card colour. */
+    };
+    static const char *names[6] = {
+        "ARGB authored #181F2A",
+        "COLORREF authored #181F2A",
+        "ARGB RGB565 #181C29",
+        "COLORREF RGB565 #181C29",
+        "RRGGBB authored #181F2A",
+        "RRGGBB RGB565 #181C29",
+    };
+
+    for (int phase = 0; phase < 6; ++phase) {
+        int result = send_display_configuration(
+            context, device,
+            0xffffffffu, 0xffffffffu, 1, colors[phase],
+            next_sequence);
+        if (result != LIBUSB_SUCCESS) {
+            return result;
+        }
+        sleep_ms(NATIVE_MESSAGE_GAP_MS);
+        result = send_native_panel_state(
+            context, device, 1, DEFAULT_METER_STYLE, next_sequence);
+        if (result != LIBUSB_SUCCESS) {
+            return result;
+        }
+        sleep_ms(NATIVE_MESSAGE_GAP_MS);
+        result = set_native_meter_surfaces(
+            context, device, 0, 0, DEFAULT_METER_STYLE, NULL, next_sequence);
+        if (result != LIBUSB_SUCCESS) {
+            return result;
+        }
+        const int badge_result = send_native_percentage_badge(
+            context, device,
+            0, (unsigned int)phase,
+            0, 1, default_channel_colors, NULL, next_sequence);
+        if (badge_result != LIBUSB_SUCCESS) {
+            return badge_result;
+        }
+        fprintf(stderr, "Action-zone colour phase %d: %s (0x%08x).\n",
+                phase, names[phase], (unsigned int)colors[phase]);
+        const int hold_result = hold_mask_phase(context, device, next_sequence);
+        if (hold_result != LIBUSB_SUCCESS) {
+            return hold_result;
+        }
+    }
+
+    const int restore_result = restore_native_compositor(
+        context, device, next_sequence);
+    if (restore_result == LIBUSB_SUCCESS) {
+        fprintf(stderr, "Fullscreen compositor baseline restored.\n");
+    }
+    return restore_result;
+}
+
 int main(int argc, char **argv) {
     const int native_object_test =
         argc == 3 && strcmp(argv[2], "--object-test") == 0;
     const int fullscreen_mask_test =
         argc == 3 && strcmp(argv[2], "--fullscreen-test") == 0;
-    if (argc != 2 && !native_object_test && !fullscreen_mask_test) {
+    const int action_zone_color_test =
+        argc == 3 && strcmp(argv[2], "--action-color-test") == 0;
+    if (argc != 2 && !native_object_test && !fullscreen_mask_test &&
+        !action_zone_color_test) {
         fprintf(stderr,
                 "Usage: %s stream100-display-replay.bin "
-                "[--object-test|--fullscreen-test]\n",
+                "[--object-test|--fullscreen-test|--action-color-test]\n",
                 argv[0]);
         return 2;
     }
@@ -2192,6 +2285,7 @@ int main(int argc, char **argv) {
     unsigned char active_brightness = 0;
     int native_object_test_sent = 0;
     int fullscreen_mask_test_sent = 0;
+    int action_zone_color_test_sent = 0;
     unsigned char previous_levels[4] = {0xff, 0xff, 0xff, 0xff};
     unsigned char previous_meter_left_levels[4] = {
         0xff, 0xff, 0xff, 0xff,
@@ -2309,7 +2403,8 @@ int main(int argc, char **argv) {
             !display_mode_changed &&
             !page_changed &&
             !custom_meter_geometry_changed &&
-            !native_object_test && !fullscreen_mask_test) {
+            !native_object_test && !fullscreen_mask_test &&
+            !action_zone_color_test) {
             usb_result = send_native_button_leds(
                 context, device, native_button_leds, 0,
                 previous_button_leds, &next_sequence);
@@ -2583,8 +2678,12 @@ int main(int argc, char **argv) {
 
         if (has_native_metadata && !native_object_test) {
             if (!fullscreen_mask_test) {
-                if (native_display_mode == 2 || native_display_mode == 3 ||
-                    native_display_mode == 4) {
+                if (native_display_mode == 5) {
+                    usb_result = activate_notepad_layout(
+                        context, device, &next_sequence);
+                } else if (native_display_mode == 2 ||
+                           native_display_mode == 3 ||
+                           native_display_mode == 4) {
                     usb_result = activate_fullscreen_image_layout(
                         context, device, &next_sequence);
                 } else {
@@ -2597,10 +2696,13 @@ int main(int argc, char **argv) {
                 if (usb_result != LIBUSB_SUCCESS) {
                     goto cleanup;
                 }
-                if (native_display_mode == 2) {
+                if (native_display_mode == 5) {
                     fprintf(stderr,
-                            "Full 480x272 image layout activated with "
-                            "transparent action-zone dividers.\n");
+                            "Notepad layout activated with action-zone "
+                            "separators matched to the card.\n");
+                } else if (native_display_mode == 2) {
+                    fprintf(stderr,
+                            "Full 480x272 image layout activated.\n");
                 } else if (native_display_mode == 3) {
                     fprintf(stderr,
                             "OpenStream100 startup layout activated.\n");
@@ -2625,13 +2727,17 @@ int main(int argc, char **argv) {
                 goto cleanup;
             }
             if (native_display_mode == 2 || native_display_mode == 3 ||
-                native_display_mode == 4) {
+                native_display_mode == 4 || native_display_mode == 5) {
                 usb_result = clear_native_percentage_badges(
                     context, device, &next_sequence);
                 if (usb_result != LIBUSB_SUCCESS) {
                     goto cleanup;
                 }
-                if (native_display_mode == 2) {
+                if (native_display_mode == 5) {
+                    fprintf(stderr,
+                            "Native percentage objects cleared for Notepad "
+                            "mode.\n");
+                } else if (native_display_mode == 2) {
                     fprintf(stderr,
                             "Native percentage objects cleared for full-screen "
                             "image mode.\n");
@@ -2748,6 +2854,17 @@ int main(int argc, char **argv) {
                 goto cleanup;
             }
             fullscreen_mask_test_sent = 1;
+        }
+
+        if (action_zone_color_test && !action_zone_color_test_sent) {
+            fprintf(stderr,
+                    "Starting six-phase Notepad action-zone colour diagnostic.\n");
+            usb_result = run_action_zone_color_test(
+                context, device, &next_sequence);
+            if (usb_result != LIBUSB_SUCCESS) {
+                goto cleanup;
+            }
+            action_zone_color_test_sent = 1;
         }
     }
 

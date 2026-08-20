@@ -17,7 +17,7 @@ chmod +x build-stream100-rpm.sh
 
 The migration is recoverable: the earlier application files are moved to a
 folder named `hercules-stream100-pre-rpm-backup` under `~/.local/share`. Saved
-assignments, colours, imported images, display mode, and button calibration in
+assignments, colours, imported images, notepad text, display mode, and button calibration in
 `~/.config/hercules-stream100` are not moved or deleted.
 
 The finished RPMs are written to this kit's `dist` directory. To build without

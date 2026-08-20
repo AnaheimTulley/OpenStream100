@@ -1,6 +1,6 @@
 Name:           hercules-stream100
-Version:        0.15.9
-Release:        1%{?dist}
+Version:        0.17.0
+Release:        3%{?dist}
 Summary:        OpenStream100 PipeWire controller for Hercules Stream 100 hardware
 
 License:        MIT
@@ -11,6 +11,8 @@ BuildRequires:  gcc
 BuildRequires:  libappstream-glib
 BuildRequires:  pkgconfig(libusb-1.0)
 BuildRequires:  python3
+BuildRequires:  python3-pillow
+BuildRequires:  python3-pyusb
 BuildRequires:  systemd-rpm-macros
 
 Requires:       bash
@@ -31,13 +33,14 @@ Requires:       wireplumber
 OpenStream100 provides up to eight pages of four per-application PipeWire volume controls for the
 Hercules Stream 100, four soft-mute buttons, programmable action buttons with
 LEDs, saved assignments, channel colours, mixer backgrounds, and a separate
-full-screen image mode. Optional native meters keep a white marker at the
+full-screen image and notepad modes. Optional native meters keep a white marker at the
 current volume while independent left/right coloured bars follow live PipeWire
 audio activity.
 The controller screen brightness can be adjusted live and saved independently.
 Per-channel application icons and on-screen button labels provide clear visual
-feedback. It includes a GTK4 configuration panel and drives the
-full 480x272 display on Fedora Linux.
+feedback. It includes a GTK4 configuration panel, a hardware-independent
+mouse-controlled virtual mixer, and drives the full 480x272 display on Fedora
+Linux.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -55,6 +58,8 @@ install -pm0755 run-stream100-control.sh \
     %{buildroot}%{_libexecdir}/%{name}/run-stream100-control.sh
 install -pm0755 run-stream100-mixer.sh \
     %{buildroot}%{_libexecdir}/%{name}/run-stream100-mixer.sh
+install -pm0755 run-stream100-virtual-mixer.sh \
+    %{buildroot}%{_libexecdir}/%{name}/run-stream100-virtual-mixer.sh
 install -pm0755 stream100-control.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100-control.py
 install -pm0755 stream100-display-service.py \
@@ -63,6 +68,8 @@ install -pm0755 stream100-mixer.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100-mixer.py
 install -pm0755 stream100-mixer-alpha.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100-mixer-alpha.py
+install -pm0755 stream100_virtual_mixer.py \
+    %{buildroot}%{_libexecdir}/%{name}/stream100_virtual_mixer.py
 install -pm0644 stream100_channel_icons.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100_channel_icons.py
 install -pm0644 stream100_version.py \
@@ -112,8 +119,13 @@ python3 -m py_compile \
      stream100-display-service.py \
      stream100-mixer.py \
      stream100-mixer-alpha.py \
+     stream100_virtual_mixer.py \
+     stream100-test-virtual-mixer.py \
+     stream100-test-notepad.py \
      stream100_channel_icons.py \
      stream100_version.py
+python3 stream100-test-notepad.py
+python3 stream100-test-virtual-mixer.py
 desktop-file-validate \
      %{buildroot}%{_datadir}/applications/com.hercules.Stream100.desktop
 appstream-util validate-relax --nonet \
@@ -139,6 +151,7 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %dir %{_libexecdir}/%{name}
 %{_libexecdir}/%{name}/run-stream100-control.sh
 %{_libexecdir}/%{name}/run-stream100-mixer.sh
+%{_libexecdir}/%{name}/run-stream100-virtual-mixer.sh
 %{_libexecdir}/%{name}/stream100-control.py
 %{_libexecdir}/%{name}/stream100-display-service.py
 %{_libexecdir}/%{name}/stream100-display-helper
@@ -146,6 +159,7 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_libexecdir}/%{name}/openstream100-startup.png
 %{_libexecdir}/%{name}/stream100-mixer.py
 %{_libexecdir}/%{name}/stream100-mixer-alpha.py
+%{_libexecdir}/%{name}/stream100_virtual_mixer.py
 %{_libexecdir}/%{name}/stream100_channel_icons.py
 %{_libexecdir}/%{name}/stream100_version.py
 %{_libexecdir}/%{name}/button_labels_overlay_boxes.png
@@ -162,6 +176,30 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_mandir}/man1/hercules-stream100.1*
 
 %changelog
+* Thu Aug 20 2026 OpenStream100 contributors - 0.17.0-3
+- Keep hardware mixer icons tied to their assigned page during page changes
+- Validate cached icons against channel and stream identity before each render
+
+* Thu Aug 20 2026 OpenStream100 contributors - 0.17.0-2
+- Add the hardware-styled, aspect-locked virtual mixer to the control panel
+- Package and test the virtual mixer launcher in Fedora and Debian builds
+- Share crisp GTK4 theme icons and vector audio fallbacks with the hardware display
+
+* Wed Aug 19 2026 OpenStream100 contributors - 0.17.0-1
+- Add saved Notepad auto-fit or fixed 10-40 px font sizing
+- Add Sans, Serif, and Monospace with regular, bold, italic, and combined styles
+- Add custom text colour and left, centre, or right alignment
+
+* Wed Aug 19 2026 OpenStream100 contributors - 0.16.1-1
+- Match the firmware-owned lower separators to the Notepad card colour
+- Give Notepad a dedicated hardware metadata mode so images remain unchanged
+- Add an action-zone colour diagnostic based on connected-hardware results
+
+* Wed Aug 19 2026 OpenStream100 contributors - 0.16.0-1
+- Add a saved Notepad screen mode with multiline paste support
+- Auto-fit reference notes to the controller's full 480x272 display
+- Preserve volume, mute, button, brightness, and full-screen compositor behavior
+
 * Tue Aug 11 2026 OpenStream100 contributors - 0.15.9-1
 - Apply the E053 companion mode required by the native Segmented style
 - Preserve independent left and right activity in the alternative geometry
