@@ -1,0 +1,15 @@
+diff --git a/packaging/com.hercules.Stream100.metainfo.xml b/packaging/com.hercules.Stream100.metainfo.xml
+index d185bc1..01aa6ab 100644
+--- a/packaging/com.hercules.Stream100.metainfo.xml
++++ b/packaging/com.hercules.Stream100.metainfo.xml
+@@ -5,6 +5,10 @@
+   <project_license>MIT</project_license>
+   <name>OpenStream100</name>
+   <summary>Control PipeWire applications with Hercules Stream 100 hardware</summary>
++  <developer id="io.github.anaheimtulley">
++    <name>OpenStream100 contributors</name>
++  </developer>
++  <url type="homepage">https://github.com/AnaheimTulley/OpenStream100</url>
+   <description>
+     <p>
+       OpenStream100 provides up to eight pages of four per-application PipeWire volume and mute

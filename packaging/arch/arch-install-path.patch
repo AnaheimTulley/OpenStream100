@@ -1,0 +1,47 @@
+diff --git a/hercules-stream100-mixer.service b/hercules-stream100-mixer.service
+index 1c60014..63ca2a4 100644
+--- a/hercules-stream100-mixer.service
++++ b/hercules-stream100-mixer.service
+@@ -8,2 +8,2 @@ Type=simple
+-ExecStart=/usr/libexec/hercules-stream100/run-stream100-mixer.sh --require-display-broker
+-WorkingDirectory=/usr/libexec/hercules-stream100
++ExecStart=/usr/lib/hercules-stream100/run-stream100-mixer.sh --require-display-broker
++WorkingDirectory=/usr/lib/hercules-stream100
+diff --git a/packaging/com.hercules.Stream100.desktop b/packaging/com.hercules.Stream100.desktop
+index 3381299..c1ab0cd 100644
+--- a/packaging/com.hercules.Stream100.desktop
++++ b/packaging/com.hercules.Stream100.desktop
+@@ -16 +16 @@ Name=Open Virtual Mixer
+-Exec=/usr/libexec/hercules-stream100/run-stream100-virtual-mixer.sh
++Exec=/usr/lib/hercules-stream100/run-stream100-virtual-mixer.sh
+diff --git a/packaging/hercules-stream100 b/packaging/hercules-stream100
+index fbfa8d7..18b9132 100755
+--- a/packaging/hercules-stream100
++++ b/packaging/hercules-stream100
+@@ -4 +4 @@ set -euo pipefail
+-exec /usr/libexec/hercules-stream100/run-stream100-control.sh "$@"
++exec /usr/lib/hercules-stream100/run-stream100-control.sh "$@"
+diff --git a/packaging/hercules-stream100-display.service b/packaging/hercules-stream100-display.service
+index 1a77572..7ddb568 100644
+--- a/packaging/hercules-stream100-display.service
++++ b/packaging/hercules-stream100-display.service
+@@ -7 +7 @@ Type=simple
+-ExecStart=/usr/bin/python3 /usr/libexec/hercules-stream100/stream100-display-service.py
++ExecStart=/usr/bin/python3 /usr/lib/hercules-stream100/stream100-display-service.py
+diff --git a/packaging/hercules-stream100.service b/packaging/hercules-stream100.service
+index 1ce5824..1b6c87f 100644
+--- a/packaging/hercules-stream100.service
++++ b/packaging/hercules-stream100.service
+@@ -10 +10 @@ Type=simple
+-ExecStart=/usr/bin/bash /usr/libexec/hercules-stream100/run-stream100-mixer.sh --require-display-broker
++ExecStart=/usr/bin/bash /usr/lib/hercules-stream100/run-stream100-mixer.sh --require-display-broker
+diff --git a/stream100-control.py b/stream100-control.py
+index 29b865e..624f5fc 100755
+--- a/stream100-control.py
++++ b/stream100-control.py
+@@ -88 +88 @@ PACKAGED_MIXER_RUNNER = Path(
+-    "/usr/libexec/hercules-stream100/run-stream100-mixer.sh"
++    "/usr/lib/hercules-stream100/run-stream100-mixer.sh"
+@@ -92 +92 @@ PACKAGED_VIRTUAL_MIXER_RUNNER = Path(
+-    "/usr/libexec/hercules-stream100/run-stream100-virtual-mixer.sh"
++    "/usr/lib/hercules-stream100/run-stream100-virtual-mixer.sh"
