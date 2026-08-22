@@ -10,7 +10,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+import webbrowser
 
 
 APP_ID = "com.hercules.Stream100"
@@ -60,6 +65,7 @@ DEFAULT_DISPLAY_BRIGHTNESS = 100
 MIN_DISPLAY_BRIGHTNESS = 10
 MAX_DISPLAY_BRIGHTNESS = 100
 DISPLAY_BRIGHTNESS_STEP = 5
+DEFAULT_REMOTE_PORT = 47680
 MAX_MIXER_PAGES = 8
 BUTTON_ACTION_CHOICES: tuple[tuple[str, str], ...] = (
     ("disabled", "Do nothing"),
@@ -524,6 +530,49 @@ def save_show_channel_icons(value: object) -> None:
         )
     payload["show_channel_icons"] = value
     write_config_payload(payload)
+
+
+def load_remote_enabled() -> bool:
+    value = read_config_payload().get("remote_enabled", False)
+    return value if isinstance(value, bool) else False
+
+
+def save_remote_enabled(value: object) -> None:
+    if not isinstance(value, bool):
+        raise RuntimeError("Remote control must be on or off")
+    payload = read_config_payload()
+    if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
+        payload["version"] = 1
+        payload["channels"] = normalise_channels(
+            [dict(channel) for channel in DEFAULT_CHANNELS]
+        )
+    payload["remote_enabled"] = value
+    write_config_payload(payload)
+
+
+def remote_admin_request(path: str, method: str = "GET") -> dict[str, Any]:
+    """Call one loopback-only endpoint exposed by the running mixer."""
+    request = Request(
+        f"http://127.0.0.1:{DEFAULT_REMOTE_PORT}/api/v1/admin{path}",
+        data=b"" if method == "POST" else None,
+        method=method,
+        headers={"Accept": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=0.8) as response:
+            payload = json.loads(response.read())
+    except HTTPError as error:
+        try:
+            payload = json.loads(error.read())
+            message = payload.get("error") if isinstance(payload, dict) else None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            message = None
+        raise RuntimeError(message or f"Remote service returned HTTP {error.code}") from error
+    except (OSError, URLError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise RuntimeError("The remote service is not available yet") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError("The remote service returned an invalid response")
+    return payload
 
 
 def load_button_overlay_style() -> str:
@@ -1029,6 +1078,10 @@ def make_window_class(Gtk, GLib, Gdk):
             self.meter_channel_mode = load_meter_channel_mode()
             self.meter_style = load_meter_style()
             self.show_channel_icons = load_show_channel_icons()
+            self.remote_enabled = load_remote_enabled()
+            self.remote_device_signature: tuple[tuple[str, str, int], ...] | None = None
+            self.remote_pairing_dialog = None
+            self.last_remote_pairing_pin = ""
             self.custom_button_overlay_path = load_custom_button_overlay_path()
             self.button_overlay_style = load_button_overlay_style()
             if (
@@ -1052,6 +1105,7 @@ def make_window_class(Gtk, GLib, Gdk):
             self.button_overlay_chooser = None
             self.button_overlay_template_chooser = None
             self.updating_switch = False
+            self.updating_remote_switch = False
             self.switching_page = False
 
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
@@ -1748,6 +1802,91 @@ def make_window_class(Gtk, GLib, Gdk):
             self.update_fullscreen_image_row()
             self.update_mode_controls()
 
+            remote_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            remote_title = Gtk.Label(label="Android remote control")
+            remote_title.set_xalign(0)
+            remote_title.add_css_class("heading")
+            remote_box.append(remote_title)
+            remote_enable_row = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=12
+            )
+            remote_enable_text = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=2
+            )
+            remote_enable_text.set_hexpand(True)
+            remote_enable_label = Gtk.Label(label="Enable local-network remote")
+            remote_enable_label.set_xalign(0)
+            remote_enable_description = Gtk.Label(
+                label=(
+                    "Allow paired phones on this network to operate the virtual mixer. "
+                    "The mixer restarts when this setting changes."
+                )
+            )
+            remote_enable_description.set_xalign(0)
+            remote_enable_description.set_wrap(True)
+            remote_enable_description.add_css_class("dim-label")
+            remote_enable_text.append(remote_enable_label)
+            remote_enable_text.append(remote_enable_description)
+            remote_enable_row.append(remote_enable_text)
+            self.remote_switch = Gtk.Switch()
+            self.remote_switch.set_valign(Gtk.Align.CENTER)
+            self.remote_switch.set_active(self.remote_enabled)
+            self.remote_switch.connect(
+                "notify::active", self.on_remote_enabled_changed
+            )
+            remote_enable_row.append(self.remote_switch)
+            remote_box.append(remote_enable_row)
+
+            self.remote_status = Gtk.Label(label="Remote control is disabled")
+            self.remote_status.set_xalign(0)
+            self.remote_status.set_wrap(True)
+            self.remote_status.add_css_class("dim-label")
+            remote_box.append(self.remote_status)
+
+            pairing_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            self.start_pairing_button = Gtk.Button(label="Pair new phone")
+            self.start_pairing_button.connect(
+                "clicked", self.on_start_remote_pairing
+            )
+            pairing_row.append(self.start_pairing_button)
+            self.cancel_pairing_button = Gtk.Button(label="Cancel PIN")
+            self.cancel_pairing_button.connect(
+                "clicked", self.on_cancel_remote_pairing
+            )
+            pairing_row.append(self.cancel_pairing_button)
+            qr_button = Gtk.Button(label="Show QR fallback")
+            qr_button.connect("clicked", self.on_show_remote_qr)
+            pairing_row.append(qr_button)
+            self.remote_qr_button = qr_button
+            remote_box.append(pairing_row)
+
+            self.remote_pin = Gtk.Label(label="")
+            self.remote_pin.set_xalign(0)
+            self.remote_pin.set_wrap(True)
+            self.remote_pin.add_css_class("pairing-pin")
+            remote_box.append(self.remote_pin)
+
+            paired_title = Gtk.Label(label="Paired phones")
+            paired_title.set_xalign(0)
+            paired_title.add_css_class("dim-label")
+            remote_box.append(paired_title)
+            self.remote_devices_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=6
+            )
+            remote_box.append(self.remote_devices_box)
+
+            firewall_hint = Gtk.Label(
+                label=(
+                    "Uses TCP port 47680 on the local network. If discovery works but "
+                    "connection fails, allow this port through the computer firewall."
+                )
+            )
+            firewall_hint.set_xalign(0)
+            firewall_hint.set_wrap(True)
+            firewall_hint.add_css_class("dim-label")
+            remote_box.append(firewall_hint)
+            root.append(remote_box)
+
             autostart_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             autostart_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             autostart_text.set_hexpand(True)
@@ -1809,6 +1948,237 @@ def make_window_class(Gtk, GLib, Gdk):
             self.message.remove_css_class("success")
             self.message.remove_css_class("error")
             self.message.add_css_class("error" if error else "success")
+
+        def rebuild_remote_devices(self, devices: list[dict[str, Any]]) -> None:
+            signature = tuple(
+                (
+                    str(device.get("id", "")),
+                    str(device.get("name", "Phone")),
+                    int(device.get("paired_at", 0)),
+                )
+                for device in devices
+            )
+            if signature == self.remote_device_signature:
+                return
+            self.remote_device_signature = signature
+            child = self.remote_devices_box.get_first_child()
+            while child is not None:
+                following = child.get_next_sibling()
+                self.remote_devices_box.remove(child)
+                child = following
+            if not devices:
+                empty = Gtk.Label(label="No phones paired yet")
+                empty.set_xalign(0)
+                empty.add_css_class("dim-label")
+                self.remote_devices_box.append(empty)
+                return
+            for device in devices:
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                paired_at = int(device.get("paired_at", 0))
+                date = time.strftime("%d %b %Y", time.localtime(paired_at)) if paired_at else ""
+                label = Gtk.Label(
+                    label=f"{device.get('name', 'Phone')} · paired {date}"
+                    if date
+                    else str(device.get("name", "Phone"))
+                )
+                label.set_xalign(0)
+                label.set_hexpand(True)
+                row.append(label)
+                revoke = Gtk.Button(label="Revoke")
+                revoke.connect(
+                    "clicked", self.on_revoke_remote_device, str(device.get("id", ""))
+                )
+                row.append(revoke)
+                self.remote_devices_box.append(row)
+
+        def show_remote_pairing_dialog(
+            self,
+            pin: str,
+            device_name: str,
+            expires: int,
+        ) -> None:
+            if self.remote_pairing_dialog is not None:
+                self.remote_pairing_dialog.close()
+            dialog = Gtk.Window(
+                title="Pair Android phone",
+                transient_for=self,
+                modal=True,
+            )
+            dialog.set_default_size(430, 230)
+            dialog.set_resizable(False)
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content.set_margin_top(24)
+            content.set_margin_bottom(24)
+            content.set_margin_start(28)
+            content.set_margin_end(28)
+            heading = Gtk.Label(
+                label=f"Pair {device_name}" if device_name else "Pair a new phone"
+            )
+            heading.add_css_class("title-2")
+            content.append(heading)
+            pin_label = Gtk.Label(label=f"{pin[:3]} {pin[3:]}")
+            pin_label.add_css_class("pairing-pin")
+            content.append(pin_label)
+            hint = Gtk.Label(
+                label=(
+                    f"Enter this PIN in the Android app. It expires in about "
+                    f"{expires} seconds and can be used once."
+                )
+            )
+            hint.set_wrap(True)
+            hint.set_justify(Gtk.Justification.CENTER)
+            hint.add_css_class("dim-label")
+            content.append(hint)
+            buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            buttons.set_halign(Gtk.Align.CENTER)
+            dismiss = Gtk.Button(label="Hide")
+            dismiss.connect("clicked", lambda _button: dialog.close())
+            buttons.append(dismiss)
+            cancel = Gtk.Button(label="Cancel pairing")
+            cancel.connect("clicked", self.on_cancel_remote_pairing)
+            buttons.append(cancel)
+            content.append(buttons)
+            dialog.set_child(content)
+
+            def on_close(_window) -> bool:
+                if self.remote_pairing_dialog is dialog:
+                    self.remote_pairing_dialog = None
+                return False
+
+            dialog.connect("close-request", on_close)
+            self.remote_pairing_dialog = dialog
+            dialog.present()
+
+        def refresh_remote_status(self, mixer_running: bool) -> None:
+            enabled = load_remote_enabled()
+            self.remote_enabled = enabled
+            if self.remote_switch.get_active() != enabled:
+                self.updating_remote_switch = True
+                self.remote_switch.set_active(enabled)
+                self.updating_remote_switch = False
+            available = enabled and mixer_running
+            self.start_pairing_button.set_sensitive(available)
+            self.remote_qr_button.set_sensitive(available)
+            if not enabled:
+                self.remote_status.set_text("Remote control is disabled")
+                self.remote_pin.set_text("")
+                self.cancel_pairing_button.set_sensitive(False)
+                self.last_remote_pairing_pin = ""
+                if self.remote_pairing_dialog is not None:
+                    self.remote_pairing_dialog.close()
+                self.rebuild_remote_devices([])
+                return
+            if not mixer_running:
+                self.remote_status.set_text(
+                    "Remote control will become available when the mixer starts"
+                )
+                self.remote_pin.set_text("")
+                self.cancel_pairing_button.set_sensitive(False)
+                self.last_remote_pairing_pin = ""
+                if self.remote_pairing_dialog is not None:
+                    self.remote_pairing_dialog.close()
+                return
+            try:
+                status = remote_admin_request("/remote")
+            except RuntimeError:
+                self.remote_status.set_text(
+                    "Remote control is starting, or this mixer needs to be restarted"
+                )
+                self.remote_pin.set_text("")
+                self.cancel_pairing_button.set_sensitive(False)
+                return
+            self.remote_status.set_text(
+                f"● Available at {status.get('server', 'port 47680')}"
+            )
+            pairing = status.get("pairing", {})
+            if isinstance(pairing, dict) and pairing.get("active"):
+                pin = str(pairing.get("pin", ""))
+                expires = int(pairing.get("expires_in", 0))
+                device_name = str(pairing.get("device_name", "")).strip()
+                self.remote_pin.set_text(
+                    f"Pairing PIN: {pin[:3]} {pin[3:]}"
+                    + (f"  ·  for {device_name}" if device_name else "")
+                    + f"  ·  expires in {expires} seconds"
+                )
+                self.cancel_pairing_button.set_sensitive(True)
+                if pin and pin != self.last_remote_pairing_pin:
+                    self.last_remote_pairing_pin = pin
+                    self.show_remote_pairing_dialog(pin, device_name, expires)
+            else:
+                self.remote_pin.set_text(
+                    "Choose Pair new phone, then enter the displayed PIN in Android."
+                )
+                self.cancel_pairing_button.set_sensitive(False)
+                self.last_remote_pairing_pin = ""
+                if self.remote_pairing_dialog is not None:
+                    self.remote_pairing_dialog.close()
+            devices = status.get("devices", [])
+            self.rebuild_remote_devices(devices if isinstance(devices, list) else [])
+
+        def on_remote_enabled_changed(self, switch, _parameter) -> None:
+            if self.updating_remote_switch:
+                return
+            enabled = switch.get_active()
+            previous = self.remote_enabled
+            try:
+                save_remote_enabled(enabled)
+                self.remote_enabled = enabled
+                if service_property("ActiveState") == "active":
+                    service_action("restart")
+                    self.show_message(
+                        "Remote control enabled and the mixer restarted."
+                        if enabled
+                        else "Remote control disabled and the mixer restarted."
+                    )
+                else:
+                    self.show_message(
+                        "Remote control enabled. Start the mixer to pair a phone."
+                        if enabled
+                        else "Remote control disabled."
+                    )
+            except (OSError, RuntimeError) as error:
+                self.show_message(str(error), error=True)
+                self.updating_remote_switch = True
+                switch.set_active(previous)
+                self.updating_remote_switch = False
+                self.remote_enabled = previous
+                save_remote_enabled(previous)
+            self.refresh_status()
+
+        def on_start_remote_pairing(self, _button) -> None:
+            try:
+                response = remote_admin_request("/pairing/start", "POST")
+                pairing = response.get("pairing", {})
+                pin = str(pairing.get("pin", "")) if isinstance(pairing, dict) else ""
+                self.show_message(
+                    f"Pairing is open. Enter {pin[:3]} {pin[3:]} on the phone."
+                )
+            except RuntimeError as error:
+                self.show_message(str(error), error=True)
+            self.refresh_status()
+
+        def on_cancel_remote_pairing(self, _button) -> None:
+            try:
+                remote_admin_request("/pairing/cancel", "POST")
+                self.show_message("Phone pairing cancelled.")
+            except RuntimeError as error:
+                self.show_message(str(error), error=True)
+            self.refresh_status()
+
+        def on_show_remote_qr(self, _button) -> None:
+            if not webbrowser.open(
+                f"http://127.0.0.1:{DEFAULT_REMOTE_PORT}/api/v1/pair"
+            ):
+                self.show_message("Could not open the pairing page.", error=True)
+
+        def on_revoke_remote_device(self, _button, device_id: str) -> None:
+            try:
+                remote_admin_request(f"/devices/{quote(device_id, safe='')}", "DELETE")
+                self.show_message("Phone access revoked.")
+            except RuntimeError as error:
+                self.show_message(str(error), error=True)
+            self.remote_device_signature = None
+            self.refresh_status()
 
         def update_background_row(self) -> None:
             if self.background_path is None:
@@ -2452,6 +2822,7 @@ def make_window_class(Gtk, GLib, Gdk):
                 self.updating_switch = True
                 self.autostart_switch.set_active(enabled)
                 self.updating_switch = False
+            self.refresh_remote_status(running)
             return True
 
     return ControlWindow
@@ -2500,6 +2871,11 @@ def main() -> int:
         }
         .success { color: #28b978; }
         .error { color: #d94d5e; }
+        .pairing-pin {
+            color: #30ccbe;
+            font-size: 20px;
+            font-weight: 700;
+        }
         """
     )
     display = Gdk.Display.get_default()

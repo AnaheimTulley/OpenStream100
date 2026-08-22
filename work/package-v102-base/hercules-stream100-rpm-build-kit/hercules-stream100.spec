@@ -1,6 +1,6 @@
 Name:           hercules-stream100
-Version:        0.17.0
-Release:        3%{?dist}
+Version:        0.17.1
+Release:        1%{?dist}
 Summary:        OpenStream100 PipeWire controller for Hercules Stream 100 hardware
 
 License:        MIT
@@ -16,12 +16,14 @@ BuildRequires:  python3-pyusb
 BuildRequires:  systemd-rpm-macros
 
 Requires:       bash
+Requires:       avahi-tools
 Requires:       fontconfig
 Requires:       gtk4
 Requires:       hicolor-icon-theme
 Requires:       pipewire-utils
 Requires:       playerctl
 Requires:       pulseaudio-utils
+Requires:       qrencode-libs
 Requires:       python3
 Requires:       python3-gobject
 Requires:       python3-pillow
@@ -70,6 +72,8 @@ install -pm0755 stream100-mixer-alpha.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100-mixer-alpha.py
 install -pm0755 stream100_virtual_mixer.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100_virtual_mixer.py
+install -pm0644 stream100_remote.py \
+    %{buildroot}%{_libexecdir}/%{name}/stream100_remote.py
 install -pm0644 stream100_channel_icons.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100_channel_icons.py
 install -pm0644 stream100_version.py \
@@ -120,12 +124,15 @@ python3 -m py_compile \
      stream100-mixer.py \
      stream100-mixer-alpha.py \
      stream100_virtual_mixer.py \
+     stream100_remote.py \
      stream100-test-virtual-mixer.py \
+     stream100-test-remote.py \
      stream100-test-notepad.py \
      stream100_channel_icons.py \
      stream100_version.py
 python3 stream100-test-notepad.py
 python3 stream100-test-virtual-mixer.py
+python3 stream100-test-remote.py
 desktop-file-validate \
      %{buildroot}%{_datadir}/applications/com.hercules.Stream100.desktop
 appstream-util validate-relax --nonet \
@@ -146,7 +153,7 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 
 %files
 %license LICENSE
-%doc README-STREAM100.md
+%doc README-STREAM100.md REMOTE-PROTOCOL.md
 %{_bindir}/hercules-stream100
 %dir %{_libexecdir}/%{name}
 %{_libexecdir}/%{name}/run-stream100-control.sh
@@ -160,6 +167,7 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_libexecdir}/%{name}/stream100-mixer.py
 %{_libexecdir}/%{name}/stream100-mixer-alpha.py
 %{_libexecdir}/%{name}/stream100_virtual_mixer.py
+%{_libexecdir}/%{name}/stream100_remote.py
 %{_libexecdir}/%{name}/stream100_channel_icons.py
 %{_libexecdir}/%{name}/stream100_version.py
 %{_libexecdir}/%{name}/button_labels_overlay_boxes.png
@@ -176,6 +184,21 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_mandir}/man1/hercules-stream100.1*
 
 %changelog
+* Sat Aug 22 2026 OpenStream100 contributors - 0.17.1-1
+- Add the Android remote mixer with smooth faders and application icons
+- Add mDNS discovery with PIN pairing, QR fallback, and GUI approval
+- Preserve per-device credentials so paired phones reconnect automatically
+
+* Sat Aug 22 2026 OpenStream100 contributors - 0.17.0-5
+- Preserve established Android credentials when reopening pairing management
+- Let new phones request a PIN that appears automatically in the desktop GUI
+- Reconnect discovered paired mixers without issuing a new credential
+
+* Fri Aug 21 2026 OpenStream100 contributors - 0.17.0-4
+- Add GUI-managed Android remote enablement and connection status
+- Add short-lived PIN pairing with hashed per-device credentials
+- List and individually revoke paired phones while retaining QR fallback
+
 * Thu Aug 20 2026 OpenStream100 contributors - 0.17.0-3
 - Keep hardware mixer icons tied to their assigned page during page changes
 - Validate cached icons against channel and stream identity before each render

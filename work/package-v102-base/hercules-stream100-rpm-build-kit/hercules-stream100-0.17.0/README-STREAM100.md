@@ -87,9 +87,19 @@ panel. It does not need administrator access. The control panel provides:
 - Built-in and user-designed button-label overlays with an exportable template
 - Controller and mixer status
 - A separate mouse-controlled virtual mixer window
+- Saved Android remote enablement with mDNS discovery, one-time PIN pairing,
+  QR fallback, and individually revocable paired phones
 - **Start mixer** and **Stop mixer** buttons
 - An **Apply changes** button
 - Optional automatic startup when you sign in
+
+To use the Android remote, enable **Android remote control** and start the
+mixer. Tap the automatically discovered mixer in Android; OpenStream100 then
+displays a temporary six-digit PIN for that phone. Enter it once and the phone
+reconnects silently with its saved credential thereafter. **Pair new phone**
+can also open the PIN window from the desktop first. Use **Revoke** beside a
+paired phone to remove only that device. TCP port `47680` must be allowed
+through the local firewall; QR pairing remains available as a fallback.
 
 Start audio in an application and select **Refresh applications** if it is not
 shown yet. Applying new assignments restarts a running mixer automatically.

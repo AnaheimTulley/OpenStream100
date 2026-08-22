@@ -18,7 +18,10 @@ for required in \
     "$source_dir/stream100-display-helper.c" \
     "$source_dir/stream100-mixer.py" \
     "$source_dir/stream100_virtual_mixer.py" \
+    "$source_dir/stream100_remote.py" \
+    "$source_dir/REMOTE-PROTOCOL.md" \
     "$source_dir/stream100-test-virtual-mixer.py" \
+    "$source_dir/stream100-test-remote.py" \
     "$source_dir/stream100-display-service.py" \
     "$source_dir/stream100-control.py" \
     "$source_dir/packaging/hercules-stream100" \
@@ -69,7 +72,7 @@ build_root="$(mktemp -d -t hercules-stream100-deb.XXXXXX)"
 trap 'rm -rf -- "$build_root"' EXIT
 
 # Standard Debian package directory layout
-pkg_dir="$build_root/hercules-stream100-0.17.0"
+pkg_dir="$build_root/hercules-stream100-0.17.1"
 mkdir -p "$pkg_dir/usr/libexec/hercules-stream100" \
     "$pkg_dir/usr/bin" \
     "$pkg_dir/usr/lib/systemd/user" \
@@ -104,6 +107,8 @@ install -pm0755 "$source_dir/stream100-mixer.py" \
 install -pm0755 "$source_dir/stream100-mixer-alpha.py" \
     "$pkg_dir/usr/libexec/hercules-stream100/"
 install -pm0755 "$source_dir/stream100_virtual_mixer.py" \
+    "$pkg_dir/usr/libexec/hercules-stream100/"
+install -pm0644 "$source_dir/stream100_remote.py" \
     "$pkg_dir/usr/libexec/hercules-stream100/"
 install -pm0644 "$source_dir/stream100_channel_icons.py" \
     "$pkg_dir/usr/libexec/hercules-stream100/"
@@ -162,18 +167,20 @@ install -Dpm0644 "$source_dir/LICENSE" \
     "$pkg_dir/usr/share/doc/hercules-stream100/LICENSE"
 install -Dpm0644 "$source_dir/README-STREAM100.md" \
     "$pkg_dir/usr/share/doc/hercules-stream100/README-STREAM100.md"
+install -Dpm0644 "$source_dir/REMOTE-PROTOCOL.md" \
+    "$pkg_dir/usr/share/doc/hercules-stream100/REMOTE-PROTOCOL.md"
 
 # --- Generate control file ---
 echo "Generating package control metadata..."
 cat > "$pkg_dir/DEBIAN/control" <<'EOF'
 Package: hercules-stream100
-Version: 0.17.0-3
+Version: 0.17.1-1
 Section: sound
 Priority: optional
 Architecture: amd64
-Depends: bash, fontconfig, gir1.2-gtk-4.0, hicolor-icon-theme,
+Depends: avahi-utils, bash, fontconfig, gir1.2-gtk-4.0, hicolor-icon-theme,
          pipewire, pipewire-pulse, python3, python3-gi,
-         python3-pil, python3-usb, systemd, wireplumber,
+         libqrencode4, python3-pil, python3-usb, systemd, wireplumber,
          libusb-1.0-0
 Recommends: playerctl
 Suggests: appstream
@@ -191,7 +198,7 @@ Description: OpenStream100 PipeWire controller for Hercules Stream 100
  Per-channel application icons and on-screen button labels provide clear visual
  feedback. It includes a GTK4 configuration panel and drives the full 480x272
  display on Debian-based Linux distributions.
-Homepage: https://github.com/openstream100/openstream100
+Homepage: https://github.com/AnaheimTulley/OpenStream100
 EOF
 
 # --- Generate postinst / postrm maintainer scripts ---
@@ -242,31 +249,34 @@ python3 -m py_compile \
     stream100-mixer.py \
     stream100-mixer-alpha.py \
     stream100_virtual_mixer.py \
+    stream100_remote.py \
     stream100-test-virtual-mixer.py \
+    stream100-test-remote.py \
     stream100-test-notepad.py \
     stream100_channel_icons.py \
     stream100_version.py
 python3 stream100-test-notepad.py
 python3 stream100-test-virtual-mixer.py
+python3 stream100-test-remote.py
 popd
 
 # --- Build the .deb ---
 echo "Building .deb package..."
 mkdir -p "$output_dir"
 dpkg-deb --build --root-owner-group "$pkg_dir" \
-    "$output_dir/hercules-stream100_0.17.0-3_amd64.deb"
+    "$output_dir/hercules-stream100_0.17.1-1_amd64.deb"
 
 echo ""
 echo "============================================"
 echo " Build complete!"
-echo " Package: $output_dir/hercules-stream100_0.17.0-3_amd64.deb"
+echo " Package: $output_dir/hercules-stream100_0.17.1-1_amd64.deb"
 echo "============================================"
 echo ""
 
 # --- Optional: install ---
 if (( install_after_build )); then
     echo "Installing the .deb package..."
-    sudo dpkg -i "$output_dir/hercules-stream100_0.17.0-3_amd64.deb"
+    sudo dpkg -i "$output_dir/hercules-stream100_0.17.1-1_amd64.deb"
 
     # Fix any missing dependencies
     echo "Checking for missing dependencies..."

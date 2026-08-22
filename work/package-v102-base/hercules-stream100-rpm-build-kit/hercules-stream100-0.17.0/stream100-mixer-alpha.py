@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import os
@@ -19,6 +20,15 @@ import threading
 import time
 from queue import Empty, Full, Queue
 from typing import Any
+
+from stream100_remote import (
+    DEFAULT_REMOTE_PORT,
+    RemoteBridge,
+    RemoteCommand,
+    RemoteServer,
+    load_or_create_token,
+    token_fingerprint,
+)
 
 try:
     import usb.core
@@ -409,6 +419,28 @@ def parse_args() -> argparse.Namespace:
         "--require-display-broker",
         action="store_true",
         help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        help="enable the authenticated Android/LAN mixer API",
+    )
+    parser.add_argument(
+        "--remote-bind",
+        default="0.0.0.0",
+        help="address for --remote to listen on (default: all local interfaces)",
+    )
+    parser.add_argument(
+        "--remote-port",
+        type=int,
+        default=DEFAULT_REMOTE_PORT,
+        help=f"TCP port for --remote (default: {DEFAULT_REMOTE_PORT})",
+    )
+    parser.add_argument(
+        "--remote-token-file",
+        type=Path,
+        default=None,
+        help="pairing-token path (default: beside the mixer configuration)",
     )
     return parser.parse_args()
 
@@ -2802,6 +2834,16 @@ def load_meter_style(path: Path) -> str:
     return value if value in METER_STYLES else DEFAULT_METER_STYLE
 
 
+def load_remote_enabled(path: Path) -> bool:
+    """Read whether the saved configuration enables the LAN remote service."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
+    value = payload.get("remote_enabled", False) if isinstance(payload, dict) else False
+    return value if isinstance(value, bool) else False
+
+
 def load_volume_meter_mode(path: Path) -> str:
     try:
         payload = json.loads(path.read_text())
@@ -3387,6 +3429,66 @@ def parse_inverted(value: str) -> set[int]:
     return inverted
 
 
+def build_remote_snapshot(
+    pages: list[dict[str, Any]],
+    current_page: int,
+    targets: list[list[str]],
+    muted_pages: list[list[bool]],
+    volume_levels: list[float],
+    meter_levels: list[StereoLevel],
+    last_command: dict[str, Any] | None = None,
+    icon_paths: list[str | None] | None = None,
+) -> dict[str, Any]:
+    """Build the transport-neutral state consumed by phone mixer clients."""
+    page = pages[current_page]
+    muted = muted_pages[current_page]
+    channels = []
+    for index, channel in enumerate(page["channels"]):
+        left, right = meter_levels[index]
+        item = {
+                "index": index,
+                "kind": str(channel.get("kind", "disabled")),
+                "label": str(channel.get("label", "Disabled")),
+                "color": str(channel.get("color", "#000000")),
+                "available": bool(targets[index]),
+                "muted": bool(muted[index]),
+                "level": round(max(0.0, min(1.0, volume_levels[index])), 4),
+                "meter_left": round(max(0.0, min(1.0, left)), 4),
+                "meter_right": round(max(0.0, min(1.0, right)), 4),
+            }
+        if icon_paths is not None and icon_paths[index] is not None:
+            item["icon"] = icon_paths[index]
+        channels.append(item)
+
+    actions = []
+    for index, action in enumerate(page["button_actions"]):
+        item: dict[str, Any] = {
+            "index": index,
+            "id": action,
+            "label": BUTTON_ACTION_LABELS.get(action, "Disabled"),
+        }
+        if action == "set_channel_volume":
+            preset = page["button_volume_presets"][index]
+            item["target_channel"] = preset["channel"] - 1
+            item["percentage"] = preset["percentage"]
+        actions.append(item)
+
+    snapshot: dict[str, Any] = {
+        "connected": True,
+        "page": current_page,
+        "page_count": len(pages),
+        "pages": [
+            {"index": index, "label": f"Page {index + 1}"}
+            for index in range(len(pages))
+        ],
+        "channels": channels,
+        "actions": actions,
+    }
+    if last_command is not None:
+        snapshot["last_command"] = dict(last_command)
+    return snapshot
+
+
 def run_mixer(
     pages: list[dict[str, Any]],
     counts_per_percent: float,
@@ -3408,6 +3510,10 @@ def run_mixer(
     display_cache: Path | None,
     display_socket: Path | None,
     require_display_broker: bool,
+    remote_enabled: bool,
+    remote_bind: str,
+    remote_port: int,
+    remote_token_file: Path,
 ) -> int:
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         print(
@@ -3439,6 +3545,8 @@ def run_mixer(
     last_display_base_frame: bytes | None = None
     programmable_leds = button_led_states(button_actions)
     level_monitor: PipeWireLevelMonitor | None = None
+    remote_bridge: RemoteBridge | None = None
+    remote_server: RemoteServer | None = None
     try:
         endpoint = find_input_endpoint(device)
         if endpoint is None:
@@ -3626,6 +3734,244 @@ def run_mixer(
                     display.close()
                     display = None
 
+        def activate_page(new_page: int) -> bool:
+            """Switch every local and remote view to one authoritative page."""
+            nonlocal current_page, channels, button_actions
+            nonlocal button_volume_presets, muted, saved_levels
+            nonlocal programmable_leds, targets, display_volume_levels
+            nonlocal volume_levels_dirty, display_meter_levels, last_meter_values
+            nonlocal previous_targets, accumulators, display_base_frame
+            nonlocal prev_cached_streams_by_ch, cached_streams_by_ch
+            nonlocal display_dirty, display_due
+            if new_page == current_page:
+                return True
+            if new_page not in range(len(pages)):
+                return False
+
+            current_page = new_page
+            channels = pages[current_page]["channels"]
+            button_actions = pages[current_page]["button_actions"]
+            button_volume_presets = pages[current_page]["button_volume_presets"]
+            muted = muted_pages[current_page]
+            saved_levels = saved_level_pages[current_page]
+            programmable_leds = button_led_states(button_actions)
+            targets = resolve_targets(channels, streams)
+            if display_helper is not None:
+                page_streams_by_ch = _resolve_channel_streams(
+                    channels, {"streams": streams}
+                )
+                _page_icons, changed_icons = _resolve_channel_icons_for_streams(
+                    channels, page_streams_by_ch
+                )
+                if changed_icons:
+                    _on_icon_cache_changed(changed_icons)
+            else:
+                page_streams_by_ch = [[] for _ in channels]
+
+            display_volume_levels = channel_levels(targets, muted, saved_levels)
+            volume_levels_dirty = False
+            display_meter_levels = [
+                (level, level) for level in display_volume_levels
+            ]
+            last_meter_values = None
+            if level_monitor is not None:
+                level_monitor.configure(
+                    resolve_meter_targets(channels, targets, streams)
+                )
+            previous_targets = None
+            accumulators = [0, 0, 0, 0]
+            display_base_frame = None
+            prev_cached_streams_by_ch = None
+            cached_streams_by_ch = page_streams_by_ch
+            display_dirty = True
+            display_due = time.monotonic()
+            return True
+
+        last_remote_command: dict[str, Any] | None = None
+        remote_icon_signatures: dict[tuple[int, int], tuple[Any, ...]] = {}
+        remote_icon_paths: dict[tuple[int, int], str] = {}
+
+        def publish_remote_icons() -> list[str | None]:
+            """Publish page icons only when their channel or streams change."""
+            if remote_bridge is None:
+                return [None] * 4
+            from stream100_channel_icons import load_channel_icon
+
+            for index, channel in enumerate(channels):
+                channel_streams = (
+                    cached_streams_by_ch[index]
+                    if index < len(cached_streams_by_ch)
+                    else []
+                )
+                signature = _channel_icon_signature(channel, channel_streams, 64)
+                key = (current_page, index)
+                if remote_icon_signatures.get(key) == signature:
+                    continue
+                icon = load_channel_icon(channel, channel_streams, icon_size=64)
+                output = io.BytesIO()
+                icon.save(output, format="PNG", optimize=True)
+                body = output.getvalue()
+                path = f"/api/v1/icons/{current_page}/{index}.png"
+                revision = remote_bridge.publish_asset(path, body, "image/png")
+                remote_icon_signatures[key] = signature
+                remote_icon_paths[key] = f"{path}?v={revision}"
+            return [
+                remote_icon_paths.get((current_page, index)) for index in range(4)
+            ]
+
+        def complete_remote_command(
+            command: RemoteCommand, succeeded: bool, message: str
+        ) -> None:
+            nonlocal last_remote_command
+            last_remote_command = {
+                "request_id": command.request_id,
+                "succeeded": succeeded,
+                "message": message,
+            }
+
+        def apply_remote_command(remote_command: RemoteCommand) -> None:
+            """Apply one validated phone command on the USB/PipeWire thread."""
+            nonlocal display_dirty, volume_levels_dirty, display_due
+            requested_page = (
+                current_page if remote_command.page is None else remote_command.page
+            )
+            if requested_page != current_page and not activate_page(requested_page):
+                complete_remote_command(remote_command, False, "Mixer page is unavailable.")
+                return
+
+            if remote_command.name == "select_page":
+                succeeded = activate_page(requested_page)
+                complete_remote_command(
+                    remote_command,
+                    succeeded,
+                    f"Page {requested_page + 1} selected."
+                    if succeeded
+                    else "Mixer page is unavailable.",
+                )
+                return
+
+            index = remote_command.channel
+            if index is None:
+                complete_remote_command(remote_command, False, "Control is missing.")
+                return
+
+            if remote_command.name == "set_volume":
+                level = float(remote_command.value)
+                if not targets[index]:
+                    complete_remote_command(remote_command, False, "Audio target is unavailable.")
+                    return
+                succeeded = set_absolute_volume(targets[index], level)
+                if succeeded:
+                    muted[index] = False
+                    if level > 0:
+                        saved_levels[index] = level
+                    display_dirty = True
+                    volume_levels_dirty = True
+                    display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+                complete_remote_command(
+                    remote_command,
+                    succeeded,
+                    f"Control {index + 1} set to {round(level * 100)}%."
+                    if succeeded
+                    else "Could not set volume.",
+                )
+                return
+
+            if remote_command.name in {"set_mute", "toggle_mute"}:
+                desired = (
+                    not muted[index]
+                    if remote_command.name == "toggle_mute"
+                    else bool(remote_command.value)
+                )
+                if desired == muted[index]:
+                    complete_remote_command(remote_command, True, "Mute state unchanged.")
+                    return
+                new_state, new_level, succeeded = soft_toggle_mute(
+                    targets[index], muted[index], saved_levels[index]
+                )
+                muted[index] = new_state
+                saved_levels[index] = new_level
+                if succeeded:
+                    display_dirty = True
+                    volume_levels_dirty = True
+                    display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+                complete_remote_command(
+                    remote_command,
+                    succeeded,
+                    f"Control {index + 1} {'muted' if new_state else 'unmuted'}."
+                    if succeeded
+                    else "Could not change mute state.",
+                )
+                return
+
+            action = button_actions[index]
+            if action in {"next_page", "previous_page"}:
+                destination = page_index_for_action(current_page, len(pages), action)
+                succeeded = activate_page(destination)
+            elif action == "set_channel_volume":
+                succeeded = apply_channel_volume_preset(
+                    index + 1,
+                    button_volume_presets[index],
+                    targets,
+                    muted,
+                    saved_levels,
+                )
+                if succeeded:
+                    display_dirty = True
+                    volume_levels_dirty = True
+                    display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+            else:
+                succeeded = run_programmable_button_action(index + 1, action)
+            complete_remote_command(
+                remote_command,
+                succeeded,
+                f"Button {index + 1} activated."
+                if succeeded
+                else f"Button {index + 1} could not be activated.",
+            )
+
+        def publish_remote_state() -> None:
+            if remote_bridge is None:
+                return
+            levels = (
+                channel_levels(targets, muted, saved_levels)
+                if volume_levels_dirty
+                else display_volume_levels
+            )
+            remote_bridge.publish(
+                build_remote_snapshot(
+                    pages,
+                    current_page,
+                    targets,
+                    muted_pages,
+                    levels,
+                    display_meter_levels,
+                    last_remote_command,
+                    publish_remote_icons(),
+                )
+            )
+
+        if remote_enabled:
+            token = load_or_create_token(remote_token_file)
+            remote_bridge = RemoteBridge()
+            remote_server = RemoteServer(
+                remote_bridge,
+                token,
+                host=remote_bind,
+                port=remote_port,
+                advertise=True,
+                device_store_path=remote_token_file.with_name("remote-devices.json"),
+            )
+            remote_server.start()
+            publish_remote_state()
+            bound_host, bound_port = remote_server.address
+            print(
+                f"  Remote mixer: http://{bound_host}:{bound_port}/api/v1 "
+                f"(pairing fingerprint {token_fingerprint(token)})"
+            )
+            print(f"  Pairing token: {remote_token_file}")
+            print("  Pairing QR: http://127.0.0.1:%d/api/v1/pair" % bound_port)
+
         print(
             "Ready. Turn encoders for volume; press them for mute; "
             "use numbered buttons for saved actions. Ctrl+C stops.\n"
@@ -3633,6 +3979,10 @@ def run_mixer(
 
         while True:
             now = time.monotonic()
+            if remote_bridge is not None:
+                for remote_command in remote_bridge.drain():
+                    apply_remote_command(remote_command)
+                publish_remote_state()
             if now >= next_brightness_refresh:
                 refreshed_brightness = load_display_brightness(config_path)
                 if refreshed_brightness != display_brightness:
@@ -3895,56 +4245,7 @@ def run_mixer(
                     new_page = page_index_for_action(
                         current_page, len(pages), action
                     )
-                    if new_page != current_page:
-                        current_page = new_page
-                        channels = pages[current_page]["channels"]
-                        button_actions = pages[current_page]["button_actions"]
-                        button_volume_presets = pages[current_page][
-                            "button_volume_presets"
-                        ]
-                        muted = muted_pages[current_page]
-                        saved_levels = saved_level_pages[current_page]
-                        programmable_leds = button_led_states(button_actions)
-                        targets = resolve_targets(channels, streams)
-
-                        # Immediately resolve icon data for the new page so the
-                        # first render pass has up-to-date icons rather than
-                        # waiting for the next timer tick.
-                        if display_helper is not None:
-                            page_streams_by_ch = _resolve_channel_streams(
-                                channels, {"streams": streams}
-                            )
-                            _page_icons, changed_icons = (
-                                _resolve_channel_icons_for_streams(
-                                    channels, page_streams_by_ch
-                                )
-                            )
-                            if changed_icons:
-                                _on_icon_cache_changed(changed_icons)
-                        else:
-                            page_streams_by_ch = [[] for _ in channels]
-
-                        display_volume_levels = channel_levels(
-                            targets, muted, saved_levels
-                        )
-                        volume_levels_dirty = False
-                        display_meter_levels = [
-                            (level, level) for level in display_volume_levels
-                        ]
-                        last_meter_values = None
-                        if level_monitor is not None:
-                            level_monitor.configure(
-                                resolve_meter_targets(channels, targets, streams)
-                            )
-                        previous_targets = None
-                        accumulators = [0, 0, 0, 0]
-                        display_base_frame = None
-                        # Invalidate the cached icon set so the first render of
-                        # the new page always does a full rebuild with icons.
-                        prev_cached_streams_by_ch = None
-                        cached_streams_by_ch = page_streams_by_ch
-                        display_dirty = True
-                        display_due = time.monotonic()
+                    if activate_page(new_page):
                         print(
                             f"Button {button}: mixer page {current_page + 1}"
                         )
@@ -3978,6 +4279,8 @@ def run_mixer(
         print("\nStopped.")
         return 0
     finally:
+        if remote_server is not None:
+            remote_server.close()
         try:
             cleanup_streams = discover_streams()
         except RuntimeError:
@@ -4024,6 +4327,9 @@ def main() -> int:
         return 2
     if args.counts_per_percent is not None and args.counts_per_percent <= 0:
         print("--counts-per-percent must be greater than zero.", file=sys.stderr)
+        return 2
+    if not 0 <= args.remote_port <= 65535:
+        print("--remote-port must be between 0 and 65535.", file=sys.stderr)
         return 2
 
     try:
@@ -4086,6 +4392,12 @@ def main() -> int:
             args.config.with_name("last-display-frame.bin"),
             None if args.no_display else args.display_socket,
             args.require_display_broker,
+            args.remote or load_remote_enabled(args.config),
+            args.remote_bind,
+            args.remote_port,
+            args.remote_token_file
+            if args.remote_token_file is not None
+            else args.config.with_name("remote-token"),
         )
     except RuntimeError as error:
         print(f"Error: {error}", file=sys.stderr)

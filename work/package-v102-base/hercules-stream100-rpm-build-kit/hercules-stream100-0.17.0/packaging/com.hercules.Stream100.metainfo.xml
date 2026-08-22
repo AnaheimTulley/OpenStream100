@@ -15,7 +15,8 @@
       knob sensitivity,
       programmable buttons and LEDs,
       full-screen image and notepad content, a resizable mouse-controlled virtual
-      mixer, sign-in startup, service status, and the controller's full-screen
+      mixer, a PIN-paired Android remote with per-device revocation,
+      sign-in startup, service status, and the controller's full-screen
       480x272 display.
     </p>
   </description>
@@ -25,6 +26,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.17.1" date="2026-08-22">
+      <description>
+        <p>Adds the Android remote mixer with mDNS discovery, GUI-approved PIN pairing, QR fallback, persistent device credentials, smooth faders, and application icons.</p>
+      </description>
+    </release>
     <release version="0.17.0" date="2026-08-20">
       <description>
         <p>Adds configurable Notepad typography, an aspect-locked hardware-styled virtual mixer, shared crisp channel icons, and page-safe hardware icon caching.</p>

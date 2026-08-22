@@ -1,0 +1,4 @@
+/.build/
+/.sources/
+/dist/
+/hercules-stream100-*.tar.gz

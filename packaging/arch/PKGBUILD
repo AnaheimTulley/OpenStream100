@@ -1,6 +1,6 @@
 # Maintainer: OpenStream100 contributors <openstream100@users.noreply.github.com>
 pkgname=hercules-stream100
-pkgver=0.17.0
+pkgver=0.17.1
 pkgrel=1
 pkgdesc="OpenStream100 PipeWire controller for Hercules Stream 100 hardware"
 arch=('x86_64' 'aarch64')
@@ -8,6 +8,7 @@ url="https://github.com/AnaheimTulley/OpenStream100"
 license=('MIT')
 depends=(
     'bash'
+    'avahi'
     'fontconfig'
     'gdk-pixbuf2'
     'glib2'
@@ -21,6 +22,7 @@ depends=(
     'python-gobject'
     'python-pillow'
     'python-pyusb'
+    'qrencode'
     'systemd'
     'wireplumber'
 )
@@ -34,17 +36,17 @@ makedepends=(
     'pkgconf'
 )
 source=(
-    "${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
+    "${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz"
     'appstream-metadata.patch'
     'arch-install-path.patch'
 )
 sha256sums=(
-    'aca684ce0deb6d693ea1a42aeefcea64902f24ec9b3ea62c57739ad0ff3062c9'
+    '8f4e2a90d1ef9e4023bab3baddefb16a86ac9374bc35affba156db79fe52ba29'
     '9f58463f8ee2bfd099e207136b9308f56c4497984223d0324a658497eb4e24cf'
     'ace0d0b3117652fea74ce7a8cf06920a9fc20fc05bd91097eb613a03264f636a'
 )
 
-_source_root="OpenStream100-${pkgver}/work/package-v102-base/hercules-stream100-rpm-build-kit/hercules-stream100-${pkgver}"
+_source_root="${pkgname}-${pkgver}"
 
 prepare() {
     cd "${srcdir}/${_source_root}"
@@ -71,12 +73,15 @@ check() {
         stream100-mixer.py \
         stream100-mixer-alpha.py \
         stream100_virtual_mixer.py \
+        stream100_remote.py \
         stream100-test-notepad.py \
+        stream100-test-remote.py \
         stream100-test-virtual-mixer.py \
         stream100_channel_icons.py \
         stream100_version.py
     python stream100-test-notepad.py
     python stream100-test-virtual-mixer.py
+    python stream100-test-remote.py
 
     desktop-file-validate packaging/com.hercules.Stream100.desktop
     appstreamcli validate --no-net \
@@ -119,6 +124,7 @@ package() {
         "${libexec_dir}/"
 
     install -m0644 \
+        stream100_remote.py \
         stream100_channel_icons.py \
         stream100_version.py \
         button_labels_overlay_basic.png \
@@ -151,6 +157,8 @@ package() {
         "${pkgdir}/usr/share/man/man1/hercules-stream100.1"
     install -m0644 README-STREAM100.md \
         "${pkgdir}/usr/share/doc/${pkgname}/README-STREAM100.md"
+    install -m0644 REMOTE-PROTOCOL.md \
+        "${pkgdir}/usr/share/doc/${pkgname}/REMOTE-PROTOCOL.md"
     install -m0644 LICENSE \
         "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
