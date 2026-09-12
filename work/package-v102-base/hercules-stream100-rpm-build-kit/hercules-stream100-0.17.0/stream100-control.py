@@ -110,6 +110,47 @@ def command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(arguments, check=False, capture_output=True, text=True)
 
 
+def calibration_command(
+    app_dir: Path = APP_DIR,
+    config_path: Path = CONFIG_PATH,
+) -> list[str]:
+    """Build the command used by the GUI's guided mute-button calibration."""
+    mixer = app_dir / "stream100-mixer.py"
+    if not mixer.is_file():
+        packaged = PACKAGED_MIXER_RUNNER.with_name("stream100-mixer.py")
+        if packaged.is_file():
+            mixer = packaged
+        else:
+            raise RuntimeError("The mute-button calibration helper is missing.")
+    return [
+        sys.executable,
+        str(mixer),
+        "--calibrate-buttons",
+        "--config",
+        str(config_path),
+    ]
+
+
+def calibration_progress(output: str) -> str:
+    """Turn the calibrator's line output into a concise GUI instruction."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if line.startswith("Press knob ") and line.endswith(" straight down now..."):
+            number = line.removeprefix("Press knob ").removesuffix(
+                " straight down now..."
+            )
+            if number in {"1", "2", "3", "4"}:
+                return (
+                    f"Step {number} of 4\n"
+                    f"Press knob {number} straight down, then release it."
+                )
+        if "numbered programmable button" in line:
+            return line
+        if "already assigned" in line:
+            return line
+    return lines[-1] if lines else "Release all buttons to begin."
+
+
 def find_virtual_mixer_runner(
     local_runner: Path = VIRTUAL_MIXER_RUNNER,
     packaged_runner: Path = PACKAGED_VIRTUAL_MIXER_RUNNER,
@@ -1107,6 +1148,13 @@ def make_window_class(Gtk, GLib, Gdk):
             self.updating_switch = False
             self.updating_remote_switch = False
             self.switching_page = False
+            self.calibration_process: subprocess.Popen[str] | None = None
+            self.calibration_dialog = None
+            self.calibration_status = None
+            self.calibration_cancel_button = None
+            self.calibration_output = ""
+            self.calibration_was_running = False
+            self.calibration_cancelled = False
 
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
             root.set_margin_top(24)
@@ -1273,6 +1321,46 @@ def make_window_class(Gtk, GLib, Gdk):
             sensitivity_hint.add_css_class("dim-label")
             sensitivity_box.append(sensitivity_hint)
             root.append(sensitivity_box)
+
+            calibration_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=6
+            )
+            calibration_title = Gtk.Label(label="Knob mute calibration")
+            calibration_title.set_xalign(0)
+            calibration_title.add_css_class("heading")
+            calibration_box.append(calibration_title)
+            calibration_row = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=8
+            )
+            calibration_label = Gtk.Label(
+                label="Match each knob press to the correct mixer channel"
+            )
+            calibration_label.set_xalign(0)
+            calibration_label.set_hexpand(True)
+            calibration_label.set_wrap(True)
+            calibration_row.append(calibration_label)
+            self.calibrate_mute_buttons_button = Gtk.Button(
+                label="Calibrate knob presses…"
+            )
+            self.calibrate_mute_buttons_button.set_tooltip_text(
+                "Fix a knob press that mutes the wrong channel"
+            )
+            self.calibrate_mute_buttons_button.connect(
+                "clicked", self.on_calibrate_mute_buttons
+            )
+            calibration_row.append(self.calibrate_mute_buttons_button)
+            calibration_box.append(calibration_row)
+            calibration_hint = Gtk.Label(
+                label=(
+                    "Use this when pressing a knob mutes a different channel. The "
+                    "mixer pauses during the four-knob calibration."
+                )
+            )
+            calibration_hint.set_xalign(0)
+            calibration_hint.set_wrap(True)
+            calibration_hint.add_css_class("dim-label")
+            calibration_box.append(calibration_hint)
+            root.append(calibration_box)
 
             buttons_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=8
@@ -2763,6 +2851,204 @@ def make_window_class(Gtk, GLib, Gdk):
             launched, message = launch_virtual_mixer()
             self.show_message(message, error=not launched)
 
+        def on_calibrate_mute_buttons(self, _button) -> None:
+            if self.calibration_process is not None:
+                if self.calibration_dialog is not None:
+                    self.calibration_dialog.present()
+                return
+            if not device_connected():
+                self.show_message(
+                    "Connect the Stream 100 before calibrating its knob presses.",
+                    error=True,
+                )
+                return
+
+            was_running = service_property("ActiveState") == "active"
+            process: subprocess.Popen[str] | None = None
+            try:
+                # Ensure calibration always has a valid config to update while
+                # retaining every unrelated setting already in the document.
+                self.capture_current_page()
+                save_mixer_pages(self.pages)
+                if was_running:
+                    service_action("stop")
+                environment = dict(os.environ)
+                environment["PYTHONUNBUFFERED"] = "1"
+                process = subprocess.Popen(
+                    calibration_command(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    env=environment,
+                )
+                if process.stdout is None:
+                    raise RuntimeError("Could not read the calibration helper output.")
+                os.set_blocking(process.stdout.fileno(), False)
+            except (OSError, RuntimeError) as error:
+                if process is not None:
+                    try:
+                        process.terminate()
+                    except OSError:
+                        pass
+                if was_running:
+                    try:
+                        service_action("start")
+                    except (OSError, RuntimeError):
+                        pass
+                self.show_message(str(error), error=True)
+                self.refresh_status()
+                return
+
+            self.calibration_process = process
+            self.calibration_output = ""
+            self.calibration_was_running = was_running
+            self.calibration_cancelled = False
+            self.calibrate_mute_buttons_button.set_sensitive(False)
+
+            dialog = Gtk.Window(
+                title="Calibrate knob presses",
+                transient_for=self,
+                modal=True,
+            )
+            dialog.set_default_size(440, 240)
+            dialog.set_resizable(False)
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            content.set_margin_top(28)
+            content.set_margin_bottom(24)
+            content.set_margin_start(28)
+            content.set_margin_end(28)
+            heading = Gtk.Label(label="Calibrate knob presses")
+            heading.add_css_class("title-2")
+            content.append(heading)
+            explanation = Gtk.Label(
+                label=(
+                    "Release every control, then follow each prompt. Press each knob "
+                    "straight down—not any of the numbered programmable buttons."
+                )
+            )
+            explanation.set_wrap(True)
+            explanation.set_justify(Gtk.Justification.CENTER)
+            explanation.add_css_class("dim-label")
+            content.append(explanation)
+            status = Gtk.Label(label="Release all buttons to begin.")
+            status.set_wrap(True)
+            status.set_justify(Gtk.Justification.CENTER)
+            status.add_css_class("calibration-status")
+            content.append(status)
+            cancel = Gtk.Button(label="Cancel")
+            cancel.set_halign(Gtk.Align.CENTER)
+            cancel.connect("clicked", self.on_cancel_calibration)
+            content.append(cancel)
+            dialog.set_child(content)
+            dialog.connect("close-request", self.on_calibration_close_requested)
+            self.calibration_dialog = dialog
+            self.calibration_status = status
+            self.calibration_cancel_button = cancel
+            dialog.present()
+            GLib.timeout_add(100, self.poll_calibration)
+
+        def on_cancel_calibration(self, _button) -> None:
+            process = self.calibration_process
+            if process is None:
+                if self.calibration_dialog is not None:
+                    self.calibration_dialog.close()
+                return
+            self.calibration_cancelled = True
+            if self.calibration_status is not None:
+                self.calibration_status.set_text("Cancelling calibration…")
+            if self.calibration_cancel_button is not None:
+                self.calibration_cancel_button.set_sensitive(False)
+            try:
+                process.terminate()
+            except OSError:
+                pass
+
+        def on_calibration_close_requested(self, _window) -> bool:
+            if self.calibration_process is not None:
+                self.on_cancel_calibration(None)
+                return True
+            self.calibration_dialog = None
+            self.calibration_status = None
+            self.calibration_cancel_button = None
+            return False
+
+        def poll_calibration(self) -> bool:
+            process = self.calibration_process
+            if process is None:
+                return False
+            if process.stdout is not None:
+                try:
+                    chunk = os.read(process.stdout.fileno(), 65536).decode(
+                        "utf-8", errors="replace"
+                    )
+                except (BlockingIOError, OSError):
+                    chunk = ""
+                if chunk:
+                    self.calibration_output += chunk
+                    if self.calibration_status is not None:
+                        self.calibration_status.set_text(
+                            calibration_progress(self.calibration_output)
+                        )
+            return_code = process.poll()
+            if return_code is None:
+                return True
+
+            if process.stdout is not None:
+                try:
+                    remainder = os.read(process.stdout.fileno(), 65536).decode(
+                        "utf-8", errors="replace"
+                    )
+                except (BlockingIOError, OSError):
+                    remainder = ""
+                if remainder:
+                    self.calibration_output += remainder
+
+            restart_error = ""
+            if self.calibration_was_running:
+                try:
+                    service_action("start")
+                except (OSError, RuntimeError) as error:
+                    restart_error = str(error)
+
+            cancelled = self.calibration_cancelled
+            succeeded = return_code == 0 and not cancelled
+            output_lines = [
+                line.strip()
+                for line in self.calibration_output.splitlines()
+                if line.strip()
+            ]
+            failure = output_lines[-1] if output_lines else "Calibration failed."
+            self.calibration_process = None
+            self.calibrate_mute_buttons_button.set_sensitive(True)
+
+            if cancelled:
+                message = "Knob-mute calibration cancelled."
+            elif succeeded:
+                message = "Knob presses calibrated successfully."
+                if self.calibration_was_running and not restart_error:
+                    message += " The mixer was restarted."
+            else:
+                message = failure
+            if restart_error:
+                message += f" Could not restart the mixer: {restart_error}"
+                succeeded = False
+            self.show_message(message, error=not succeeded and not cancelled)
+
+            if self.calibration_status is not None:
+                self.calibration_status.set_text(message)
+            if self.calibration_cancel_button is not None:
+                self.calibration_cancel_button.set_sensitive(True)
+                self.calibration_cancel_button.set_label("Close")
+            if cancelled and self.calibration_dialog is not None:
+                dialog = self.calibration_dialog
+                self.calibration_dialog = None
+                self.calibration_status = None
+                self.calibration_cancel_button = None
+                dialog.close()
+            self.refresh_status()
+            return False
+
         def on_power_clicked(self, _button) -> None:
             try:
                 if service_property("ActiveState") == "active":
@@ -2874,6 +3160,11 @@ def main() -> int:
         .pairing-pin {
             color: #30ccbe;
             font-size: 20px;
+            font-weight: 700;
+        }
+        .calibration-status {
+            color: #30ccbe;
+            font-size: 18px;
             font-weight: 700;
         }
         """

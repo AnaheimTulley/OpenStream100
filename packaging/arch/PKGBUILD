@@ -1,6 +1,6 @@
 # Maintainer: OpenStream100 contributors <openstream100@users.noreply.github.com>
 pkgname=hercules-stream100
-pkgver=0.17.1
+pkgver=0.17.2
 pkgrel=1
 pkgdesc="OpenStream100 PipeWire controller for Hercules Stream 100 hardware"
 arch=('x86_64' 'aarch64')
@@ -41,7 +41,7 @@ source=(
     'arch-install-path.patch'
 )
 sha256sums=(
-    '8f4e2a90d1ef9e4023bab3baddefb16a86ac9374bc35affba156db79fe52ba29'
+    '741982814bd3a1152bd8b97d35de3d6500b7c508673489be0bd186df5360e678'
     '9f58463f8ee2bfd099e207136b9308f56c4497984223d0324a658497eb4e24cf'
     'ace0d0b3117652fea74ce7a8cf06920a9fc20fc05bd91097eb613a03264f636a'
 )

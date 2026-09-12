@@ -1,5 +1,5 @@
 Name:           hercules-stream100
-Version:        0.17.1
+Version:        0.17.2
 Release:        1%{?dist}
 Summary:        OpenStream100 PipeWire controller for Hercules Stream 100 hardware
 
@@ -184,6 +184,11 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_mandir}/man1/hercules-stream100.1*
 
 %changelog
+* Sat Sep 12 2026 OpenStream100 contributors - 0.17.2-1
+- Add guided knob-mute calibration to the Linux control panel
+- Pause and restore the mixer automatically around calibration
+- Reject the separate numbered programmable buttons during knob learning
+
 * Sat Aug 22 2026 OpenStream100 contributors - 0.17.1-1
 - Add the Android remote mixer with smooth faders and application icons
 - Add mDNS discovery with PIN pairing, QR fallback, and GUI approval

@@ -86,19 +86,19 @@ The release includes `SHA256SUMS` for verifying downloaded files.
 ### Fedora
 
 ```bash
-sudo dnf install ./hercules-stream100-0.17.1-1.fc44.x86_64.rpm
+sudo dnf install ./hercules-stream100-0.17.2-1.fc44.x86_64.rpm
 ```
 
 ### Debian or Ubuntu
 
 ```bash
-sudo apt install ./hercules-stream100_0.17.1-1_amd64.deb
+sudo apt install ./hercules-stream100_0.17.2-1_amd64.deb
 ```
 
 ### Arch Linux and derivatives
 
 ```bash
-sudo pacman -U ./hercules-stream100-0.17.1-1-x86_64.pkg.tar.zst
+sudo pacman -U ./hercules-stream100-0.17.2-1-x86_64.pkg.tar.zst
 ```
 
 The maintained `PKGBUILD` and its build instructions are available in
@@ -132,6 +132,11 @@ stored per user in:
 ```text
 ~/.config/hercules-stream100/
 ```
+
+If pressing a knob mutes the wrong channel, open **Knob mute calibration** in the
+control panel and select **Calibrate knob presses…**. The mixer pauses while you
+press and release the four knobs in order, then resumes automatically. Do not use
+the separate numbered programmable buttons during calibration.
 
 ## Pairing the Android remote
 

@@ -86,6 +86,7 @@ DEFAULT_BUTTON_MASKS = {
     3: 0x04,
     4: 0x02,
 }
+MUTE_BUTTON_MASKS = frozenset(DEFAULT_BUTTON_MASKS.values())
 PROGRAMMABLE_BUTTON_MASKS = {
     # The hardware's input-bit order does not follow either the printed
     # button numbers or the native LED-object order.
@@ -348,7 +349,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--calibrate-buttons",
         action="store_true",
-        help="learn and save the physical push-button bit for each encoder",
+        help="learn and save the mute action produced by pressing each knob",
     )
     parser.add_argument(
         "--config",
@@ -2909,8 +2910,7 @@ def load_button_masks(path: Path) -> dict[int, int]:
 
     valid = (
         set(masks) == {1, 2, 3, 4}
-        and len(set(masks.values())) == 4
-        and all(0 < value <= 0xFF and value & (value - 1) == 0 for value in masks.values())
+        and set(masks.values()) == MUTE_BUTTON_MASKS
     )
     return masks if valid else dict(DEFAULT_BUTTON_MASKS)
 
@@ -3353,8 +3353,8 @@ def calibrate_buttons(config_path: Path) -> int:
         usb.util.claim_interface(device, INTERFACE)
         claimed = True
 
-        print("Stream 100 encoder-button calibration")
-        print("Release all buttons. Each requested encoder should be pressed once.\n")
+        print("Stream 100 knob-mute calibration")
+        print("Release all controls. Press each requested knob straight down once.\n")
 
         latest: bytes | None = None
         settle_ends = time.monotonic() + 0.5
@@ -3367,7 +3367,7 @@ def calibrate_buttons(config_path: Path) -> int:
         learned: dict[int, int] = {}
         for encoder in range(1, 5):
             while True:
-                print(f"Press encoder {encoder} now...")
+                print(f"Press knob {encoder} straight down now...")
                 deadline = time.monotonic() + 20.0
                 previous_buttons = latest[1]
                 detected: int | None = None
@@ -3380,6 +3380,12 @@ def calibrate_buttons(config_path: Path) -> int:
                     rising = latest[1] & (~previous_buttons & 0xFF)
                     previous_buttons = latest[1]
                     if rising and rising & (rising - 1) == 0:
+                        if rising not in MUTE_BUTTON_MASKS:
+                            print(
+                                "  That was a numbered programmable button. "
+                                f"Press knob {encoder} straight down instead.\n"
+                            )
+                            continue
                         detected = rising
                         break
 

@@ -287,11 +287,16 @@ Choose the four applications again:
 ./run-stream100-mixer.sh --setup
 ```
 
-Relearn the four physical mute buttons:
+Relearn the mute action produced by pressing each knob:
 
 ```bash
 ./run-stream100-mixer.sh --calibrate-buttons
 ```
+
+The same guided calibration is available in the control panel under **Knob mute
+calibration**. It stops the mixer while you press each knob straight down and
+restarts it automatically when calibration finishes. Do not press the separate
+numbered programmable buttons during calibration.
 
 Show currently available PipeWire playback applications:
 
