@@ -1,5 +1,5 @@
 Name:           hercules-stream100
-Version:        0.17.2
+Version:        0.18.1
 Release:        1%{?dist}
 Summary:        OpenStream100 PipeWire controller for Hercules Stream 100 hardware
 
@@ -20,6 +20,7 @@ Requires:       avahi-tools
 Requires:       fontconfig
 Requires:       gtk4
 Requires:       hicolor-icon-theme
+Requires:       libayatana-appindicator-gtk3
 Requires:       pipewire-utils
 Requires:       playerctl
 Requires:       pulseaudio-utils
@@ -64,6 +65,10 @@ install -pm0755 run-stream100-virtual-mixer.sh \
     %{buildroot}%{_libexecdir}/%{name}/run-stream100-virtual-mixer.sh
 install -pm0755 stream100-control.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100-control.py
+install -pm0755 stream100-tray.py \
+    %{buildroot}%{_libexecdir}/%{name}/stream100-tray.py
+install -pm0644 stream100_preview.py \
+    %{buildroot}%{_libexecdir}/%{name}/stream100_preview.py
 install -pm0755 stream100-display-service.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100-display-service.py
 install -pm0755 stream100-mixer.py \
@@ -74,6 +79,8 @@ install -pm0755 stream100_virtual_mixer.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100_virtual_mixer.py
 install -pm0644 stream100_remote.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100_remote.py
+install -pm0644 stream100_system_monitor.py \
+    %{buildroot}%{_libexecdir}/%{name}/stream100_system_monitor.py
 install -pm0644 stream100_channel_icons.py \
     %{buildroot}%{_libexecdir}/%{name}/stream100_channel_icons.py
 install -pm0644 stream100_version.py \
@@ -99,6 +106,8 @@ install -Dpm0644 packaging/hercules-stream100.service \
      %{buildroot}%{_userunitdir}/hercules-stream100.service
 install -Dpm0644 packaging/hercules-stream100-display.service \
       %{buildroot}%{_userunitdir}/hercules-stream100-display.service
+install -Dpm0644 packaging/hercules-stream100-tray.service \
+      %{buildroot}%{_userunitdir}/hercules-stream100-tray.service
 # Install the mixer service from the source directory if it exists,
 # otherwise fall back to the packaged copy in packaging/.
 install -Dpm0644 hercules-stream100-mixer.service \
@@ -120,6 +129,8 @@ desktop-file-install \
 cd %{_builddir}/%{name}-%{version}
 python3 -m py_compile \
      stream100-control.py \
+     stream100-tray.py \
+     stream100_preview.py \
      stream100-display-service.py \
      stream100-mixer.py \
      stream100-mixer-alpha.py \
@@ -128,11 +139,18 @@ python3 -m py_compile \
      stream100-test-virtual-mixer.py \
      stream100-test-remote.py \
      stream100-test-notepad.py \
+     stream100-test-updates.py \
+     stream100-test-system-monitor.py \
+     stream100-test-badge-styles.py \
      stream100_channel_icons.py \
+     stream100_system_monitor.py \
      stream100_version.py
 python3 stream100-test-notepad.py
 python3 stream100-test-virtual-mixer.py
 python3 stream100-test-remote.py
+python3 stream100-test-updates.py
+python3 stream100-test-system-monitor.py
+python3 stream100-test-badge-styles.py
 desktop-file-validate \
      %{buildroot}%{_datadir}/applications/com.hercules.Stream100.desktop
 appstream-util validate-relax --nonet \
@@ -143,13 +161,13 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 ./stream100-test-native-meters
 
 %post
-%systemd_user_post hercules-stream100-display.service hercules-stream100-mixer.service hercules-stream100.service
+%systemd_user_post hercules-stream100-display.service hercules-stream100-mixer.service hercules-stream100.service hercules-stream100-tray.service
 
 %preun
-%systemd_user_preun hercules-stream100-display.service hercules-stream100-mixer.service hercules-stream100.service
+%systemd_user_preun hercules-stream100-display.service hercules-stream100-mixer.service hercules-stream100.service hercules-stream100-tray.service
 
 %postun
-%systemd_user_postun_with_restart hercules-stream100-display.service hercules-stream100-mixer.service hercules-stream100.service
+%systemd_user_postun_with_restart hercules-stream100-display.service hercules-stream100-mixer.service hercules-stream100.service hercules-stream100-tray.service
 
 %files
 %license LICENSE
@@ -160,6 +178,8 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_libexecdir}/%{name}/run-stream100-mixer.sh
 %{_libexecdir}/%{name}/run-stream100-virtual-mixer.sh
 %{_libexecdir}/%{name}/stream100-control.py
+%{_libexecdir}/%{name}/stream100-tray.py
+%{_libexecdir}/%{name}/stream100_preview.py
 %{_libexecdir}/%{name}/stream100-display-service.py
 %{_libexecdir}/%{name}/stream100-display-helper
 %{_libexecdir}/%{name}/stream100-display-replay.bin
@@ -168,6 +188,7 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_libexecdir}/%{name}/stream100-mixer-alpha.py
 %{_libexecdir}/%{name}/stream100_virtual_mixer.py
 %{_libexecdir}/%{name}/stream100_remote.py
+%{_libexecdir}/%{name}/stream100_system_monitor.py
 %{_libexecdir}/%{name}/stream100_channel_icons.py
 %{_libexecdir}/%{name}/stream100_version.py
 %{_libexecdir}/%{name}/button_labels_overlay_boxes.png
@@ -177,6 +198,7 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_userunitdir}/hercules-stream100-display.service
 %{_userunitdir}/hercules-stream100-mixer.service
 %{_userunitdir}/hercules-stream100.service
+%{_userunitdir}/hercules-stream100-tray.service
 %{_udevrulesdir}/70-hercules-stream100.rules
 %{_datadir}/applications/com.hercules.Stream100.desktop
 %{_datadir}/icons/hicolor/scalable/apps/com.hercules.Stream100.svg
@@ -184,6 +206,19 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_mandir}/man1/hercules-stream100.1*
 
 %changelog
+* Mon Sep 14 2026 OpenStream100 contributors - 0.18.1-1
+- Add an Ayatana AppIndicator tray icon with mixer controls
+- Add a live controller-screen preview for unsaved display settings
+- Add a native-bar System Monitor display for CPU, GPU, memory, and disk metrics
+- Omit audio volume-marker objects from the System Monitor display
+- Reorganise the control panel into Mixer, Buttons, Display, and Android app tabs
+- Hide display settings that do not apply to the currently selected display mode
+- Add automatic and manual GitHub release checks to the control panel
+- Cache update checks for 24 hours and keep network work off the GTK thread
+- Show newer releases without downloading or installing packages automatically
+- Add selectable OpenStream and Hercules badge styles
+- Keep Hercules volume feedback tear-free with a smaller native percentage capsule
+
 * Sat Sep 12 2026 OpenStream100 contributors - 0.17.2-1
 - Add guided knob-mute calibration to the Linux control panel
 - Pause and restore the mixer automatically around calibration

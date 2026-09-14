@@ -33,7 +33,7 @@ in `~/.config/hercules-stream100` are **not** moved or deleted.
 ## Manual install after building
 
 ```bash
-sudo dpkg -i dist/hercules-stream100_0.17.2-1_amd64.deb
+sudo dpkg -i dist/hercules-stream100_0.18.1-1_amd64.deb
 sudo apt-get install -f   # resolve any missing dependencies
 ```
 

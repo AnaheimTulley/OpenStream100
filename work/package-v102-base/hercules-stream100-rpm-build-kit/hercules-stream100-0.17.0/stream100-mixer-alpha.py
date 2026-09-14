@@ -29,6 +29,11 @@ from stream100_remote import (
     load_or_create_token,
     token_fingerprint,
 )
+from stream100_system_monitor import (
+    ConfiguredSystemSnapshot,
+    SystemMonitor,
+    SystemSnapshot,
+)
 
 try:
     import usb.core
@@ -65,6 +70,9 @@ METER_CHANNEL_MODES = ("stereo", "mono")
 DEFAULT_METER_CHANNEL_MODE = "stereo"
 METER_STYLES = ("classic", "segmented", "rounded", "slim")
 DEFAULT_METER_STYLE = "classic"
+BADGE_STYLES = ("openstream", "hercules")
+DEFAULT_BADGE_STYLE = "openstream"
+HERCULES_VOLUME_LABEL_SECONDS = 1.5
 CUSTOM_METER_STEPS = 15
 CUSTOM_METER_PALETTE_BASE = 120
 CUSTOM_METER_PALETTE_COLORS = 4 * 2 * CUSTOM_METER_STEPS
@@ -130,14 +138,14 @@ BUTTON_OVERLAY_STYLES = ("boxes", "basic", "glass", "custom")
 CUSTOM_BUTTON_OVERLAY_PATH = DEFAULT_CONFIG.with_name("button-overlay-custom.png")
 
 
-def _load_show_channel_icons() -> bool:
-    """Read the show_channel_icons setting from the user config."""
+def load_badge_style(path: Path) -> str:
+    """Read the mixer badge layout, defaulting existing configs safely."""
     try:
-        payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
-        value = payload.get("show_channel_icons", True)
-        return value if isinstance(value, bool) else True
-    except (FileNotFoundError, json.JSONDecodeError):
-        return True
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return DEFAULT_BADGE_STYLE
+    value = payload.get("badge_style") if isinstance(payload, dict) else None
+    return value if value in BADGE_STYLES else DEFAULT_BADGE_STYLE
 
 
 def _load_button_overlay_style() -> str:
@@ -297,14 +305,19 @@ def _draw_channel_icons_on_mixer(
     channels: list[dict],
     streams_by_ch: list[list[dict]],
     icon_size: int = 24,
+    badge_style: str = DEFAULT_BADGE_STYLE,
     badge_fill=None,
     badge_outline=None,
 ):
-    """Draw small icons on the top-right of each channel column."""
+    """Draw channel icons in the selected badge layout."""
     for i, ch in enumerate(channels):
-        col_right = i * 120 + 120  # each column is 120 px wide
-        cx = col_right - 18
-        cy_top = 10
+        col_left = i * 120
+        if badge_style == "hercules":
+            cx = col_left + 60
+            cy_top = 9
+        else:
+            cx = col_left + 102
+            cy_top = 10
         r = icon_size // 2
 
         streams = streams_by_ch[i] if i < len(streams_by_ch) else []
@@ -316,6 +329,152 @@ def _draw_channel_icons_on_mixer(
             (paste_area[0], paste_area[1]),
             icon_img,
         )
+
+
+def system_monitor_source_ids(
+    snapshot: SystemSnapshot | ConfiguredSystemSnapshot,
+) -> tuple[str, str, str, str]:
+    """Return the source behind each System Monitor column."""
+    if isinstance(snapshot, ConfiguredSystemSnapshot):
+        return snapshot.source_ids
+    return ("cpu", "gpu", "memory", "disk:/")
+
+
+def _system_monitor_icon_kind(source_id: str) -> str:
+    """Map configurable source IDs to one of the built-in monitor glyphs."""
+    if source_id == "cpu":
+        return "cpu"
+    if source_id.startswith("gpu"):
+        return "gpu"
+    if source_id == "memory":
+        return "memory"
+    if source_id.startswith("disk:"):
+        return "disk"
+    return "unknown"
+
+
+def _draw_system_monitor_icons(
+    image,
+    source_ids: tuple[str, str, str, str],
+) -> None:
+    """Draw crisp, dependency-free sensor glyphs at each column's top-right."""
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(image)
+    foreground = UI_COLORS[2]
+    secondary = UI_COLORS[3]
+
+    for index, source_id in enumerate(source_ids):
+        # This 24x24 box matches the standard mixer icon placement.
+        x = index * 120 + 90
+        y = 11
+        kind = _system_monitor_icon_kind(source_id)
+
+        if kind == "cpu":
+            draw.rounded_rectangle(
+                (x + 5, y + 5, x + 18, y + 18),
+                radius=2,
+                outline=foreground,
+                width=2,
+            )
+            draw.rectangle(
+                (x + 9, y + 9, x + 14, y + 14),
+                outline=secondary,
+                width=1,
+            )
+            for offset in (8, 12, 16):
+                draw.line(
+                    (x + offset, y + 2, x + offset, y + 5),
+                    fill=foreground,
+                )
+                draw.line(
+                    (x + offset, y + 18, x + offset, y + 21),
+                    fill=foreground,
+                )
+                draw.line(
+                    (x + 2, y + offset, x + 5, y + offset),
+                    fill=foreground,
+                )
+                draw.line(
+                    (x + 18, y + offset, x + 21, y + offset),
+                    fill=foreground,
+                )
+        elif kind == "gpu":
+            draw.rounded_rectangle(
+                (x + 2, y + 4, x + 20, y + 18),
+                radius=2,
+                outline=foreground,
+                width=2,
+            )
+            draw.ellipse(
+                (x + 6, y + 7, x + 14, y + 15),
+                outline=secondary,
+                width=2,
+            )
+            draw.line(
+                (x + 20, y + 8, x + 22, y + 8), fill=foreground, width=2
+            )
+            draw.line(
+                (x + 20, y + 14, x + 22, y + 14), fill=foreground, width=2
+            )
+            draw.line(
+                (x + 7, y + 19, x + 17, y + 19), fill=foreground, width=2
+            )
+        elif kind == "memory":
+            draw.rounded_rectangle(
+                (x + 2, y + 5, x + 21, y + 17),
+                radius=2,
+                outline=foreground,
+                width=2,
+            )
+            for chip_x in (5, 10, 15):
+                draw.rectangle(
+                    (x + chip_x, y + 8, x + chip_x + 3, y + 13),
+                    fill=secondary,
+                )
+            for pin_x in (5, 8, 12, 16, 19):
+                draw.line(
+                    (x + pin_x, y + 18, x + pin_x, y + 20),
+                    fill=foreground,
+                )
+        elif kind == "disk":
+            draw.ellipse(
+                (x + 4, y + 3, x + 19, y + 9),
+                outline=foreground,
+                width=2,
+            )
+            draw.line(
+                (x + 4, y + 6, x + 4, y + 18), fill=foreground, width=2
+            )
+            draw.line(
+                (x + 19, y + 6, x + 19, y + 18), fill=foreground, width=2
+            )
+            draw.arc(
+                (x + 4, y + 14, x + 19, y + 21),
+                start=0,
+                end=180,
+                fill=foreground,
+                width=2,
+            )
+            draw.arc(
+                (x + 4, y + 9, x + 19, y + 15),
+                start=0,
+                end=180,
+                fill=secondary,
+                width=1,
+            )
+        else:
+            draw.ellipse(
+                (x + 3, y + 3, x + 20, y + 20),
+                outline=secondary,
+                width=2,
+            )
+            draw.text(
+                (x + 9, y + 4),
+                "?",
+                font=ui_font(12, bold=True),
+                fill=foreground,
+            )
 
 
 
@@ -1438,6 +1597,37 @@ def custom_meter_palette_index(channel: int, side: int, step: int) -> int:
     )
 
 
+def draw_system_monitor_meter_indices(
+    row_major: bytearray,
+    meter_levels: list[float | StereoLevel],
+) -> None:
+    """Stamp high-resolution live rails while leaving all other pixels unchanged."""
+    for channel in range(4):
+        channel_left = channel * 120
+        raw_level = meter_levels[channel]
+        if isinstance(raw_level, (tuple, list)):
+            side_levels = (float(raw_level[0]), float(raw_level[1]))
+        else:
+            side_levels = (float(raw_level), float(raw_level))
+        # Every live x coordinate has the same x % 8 value. Combined with the
+        # four possible y % 4 values, all eight bars therefore occupy only
+        # four of the controller's 32 interleaved framebuffer planes.
+        for side, columns in enumerate(
+            ((channel_left + 45, channel_left + 53),
+             (channel_left + 69, channel_left + 77))
+        ):
+            top, bottom = 85, 185
+            fill_height = round(
+                max(0.0, min(1.0, side_levels[side])) * (bottom - top + 1)
+            )
+            fill_top = bottom - fill_height + 1
+            for y in range(top, bottom + 1):
+                palette_index = 4 + channel if y >= fill_top else 13
+                offset = y * DISPLAY_WIDTH
+                for x in columns:
+                    row_major[offset + x] = palette_index
+
+
 def custom_meter_static_palette(
     channel_colors: list[tuple[int, int, int]], meter_style: str
 ) -> list[tuple[int, int, int]]:
@@ -1900,6 +2090,8 @@ def native_display_metadata(
     volume_meter_mode: str = "volume",
     meter_levels: list[float | StereoLevel] | None = None,
     display_brightness: int = DEFAULT_DISPLAY_BRIGHTNESS,
+    badge_style: str = DEFAULT_BADGE_STYLE,
+    transient_volume_mask: int = 0,
 ) -> bytes:
     if level_override is not None and len(level_override) != 4:
         raise RuntimeError("native display override requires four levels")
@@ -1938,6 +2130,7 @@ def native_display_metadata(
         "mixer": 1,
         "image": 2,
         "notepad": 5,
+        "system": 6,
         "startup": 3,
         "startup-primer": 4,
     }.get(display_mode, 1)
@@ -1960,6 +2153,10 @@ def native_display_metadata(
     )
     if volume_meter_mode not in VOLUME_METER_MODES:
         raise RuntimeError("unsupported volume meter mode")
+    if badge_style not in BADGE_STYLES:
+        raise RuntimeError("unsupported badge style")
+    if not 0 <= transient_volume_mask <= 0x0F:
+        raise RuntimeError("transient volume mask must fit four channels")
     displayed_meter_levels: list[float | StereoLevel] = (
         list(levels) if meter_levels is None else list(meter_levels)
     )
@@ -1990,10 +2187,19 @@ def native_display_metadata(
     metadata[24:28] = bytes(
         led_states[index] | (packed_right[index] << 4) for index in range(4)
     )
-    # Meter mode 2 means the native 0x41 volume marker and 0x40 activity bars
-    # are both active.  Older mode 1 frames remain readable by the helper, but
-    # new OpenStream100 frames no longer make the user choose between them.
-    metadata[30] = 2 if show_volume_meters else 0
+    # Meter mode 2 combines the native 0x41 volume marker and 0x40 activity
+    # bars for Mixer mode. System Monitor deliberately leaves this at zero and
+    # draws its independent usage bars into the framebuffer instead.
+    metadata[30] = (
+        2 if show_volume_meters and display_mode == "mixer"
+        else 0
+    )
+    if badge_style == "hercules":
+        metadata[30] |= 0x04
+        # The high nibble asks the helper to show a compact, temporary native
+        # percentage over the corresponding icon.  Keeping this in metadata
+        # avoids touching or latching the full-screen framebuffer.
+        metadata[30] |= transient_volume_mask << 4
     return bytes(metadata)
 
 
@@ -2013,6 +2219,8 @@ def update_native_display_metadata(
     volume_meter_mode: str = "volume",
     meter_levels: list[float | StereoLevel] | None = None,
     display_brightness: int = DEFAULT_DISPLAY_BRIGHTNESS,
+    badge_style: str = DEFAULT_BADGE_STYLE,
+    transient_volume_mask: int = 0,
 ) -> bytes:
     if len(base_frame) != DISPLAY_MESSAGE_BYTES:
         raise RuntimeError("cached display frame has an invalid size")
@@ -2033,6 +2241,8 @@ def update_native_display_metadata(
             volume_meter_mode=volume_meter_mode,
             meter_levels=meter_levels,
             display_brightness=display_brightness,
+            badge_style=badge_style,
+            transient_volume_mask=transient_volume_mask,
         )
     )
     return bytes(result)
@@ -2054,10 +2264,15 @@ def render_mixer_display(
     show_volume_meters: bool = False,
     volume_meter_mode: str = "volume",
     meter_levels: list[float | StereoLevel] | None = None,
+    framebuffer_meter_levels: list[float | StereoLevel] | None = None,
     display_brightness: int = DEFAULT_DISPLAY_BRIGHTNESS,
     streams_by_ch: list[list[dict]] | None = None,
     button_actions: list[str] | None = None,
     button_volume_presets: list[dict[str, int]] | None = None,
+    display_mode: str = "mixer",
+    badge_style: str = DEFAULT_BADGE_STYLE,
+    transient_volume_mask: int = 0,
+    system_source_ids: tuple[str, str, str, str] | None = None,
 ) -> bytes:
     try:
         from PIL import Image, ImageDraw
@@ -2068,6 +2283,12 @@ def render_mixer_display(
 
     if preview_levels is not None and len(preview_levels) != 4:
         raise RuntimeError("display preview requires four levels")
+    if framebuffer_meter_levels is not None and len(framebuffer_meter_levels) != 4:
+        raise RuntimeError("framebuffer meters require four levels")
+    if badge_style not in BADGE_STYLES:
+        raise RuntimeError("unsupported badge style")
+    if not 0 <= transient_volume_mask <= 0x0F:
+        raise RuntimeError("transient volume mask must fit four channels")
     levels = (
         list(preview_levels)
         if preview_levels is not None
@@ -2126,6 +2347,9 @@ def render_mixer_display(
             fill=UI_COLORS[3],
         )
 
+        # In Hercules style the label remains part of the static framebuffer.
+        # Its transient percentage is a small native object, so knob movement
+        # never causes a framebuffer plane update or visible panel refresh.
         lines = fit_label(draw, channel.get("label", "Disabled"), label_font, 98)
         label_y = 43 if native_overlay else 12
         for line in lines:
@@ -2143,7 +2367,23 @@ def render_mixer_display(
                 right,
             )
 
-        if not native_overlay:
+        if framebuffer_meter_levels is not None:
+            bar_top = 82
+            bar_bottom = 188
+            for bar_left, bar_right in (
+                (left + 42, left + 57),
+                (left + 63, left + 78),
+            ):
+                draw.rounded_rectangle(
+                    (bar_left, bar_top, bar_right, bar_bottom),
+                    radius=5,
+                    fill=UI_COLORS[13],
+                    outline=UI_COLORS[8],
+                    width=2,
+                )
+                # The live fill is stamped as fixed indexed-colour segments
+                # below; only their palette entries change during updates.
+        elif not native_overlay:
             bar_left = left + 42
             bar_right = left + 78
             bar_top = 96
@@ -2181,11 +2421,27 @@ def render_mixer_display(
         # Status text removed — button labels overlay provides visual feedback instead
 
 
-    if streams_by_ch and _load_show_channel_icons():
+    if streams_by_ch:
         try:
-            _draw_channel_icons_on_mixer(image, draw, channels, streams_by_ch)
+            icon_size = 32 if badge_style == "hercules" else 24
+            _draw_channel_icons_on_mixer(
+                image,
+                draw,
+                channels,
+                streams_by_ch,
+                icon_size=icon_size,
+                badge_style=badge_style,
+            )
         except Exception as err:
             # Icon resolution is non-critical; fall through gracefully.
+            pass
+
+    if system_source_ids is not None:
+        try:
+            _draw_system_monitor_icons(image, system_source_ids)
+        except Exception:
+            # Sensor icons are decorative; keep the monitor usable if drawing
+            # fails on an older Pillow build.
             pass
 
     # Draw button labels overlay at the bottom of the display
@@ -2272,6 +2528,9 @@ def render_mixer_display(
             *([(0, 0, 0)] * (CUSTOM_METER_PALETTE_BASE - len(palette_colors))),
             *custom_meter_static_palette(channel_colors, meter_style),
         ]
+    elif framebuffer_meter_levels is not None:
+        row_major = bytearray(row_major)
+        draw_system_monitor_meter_indices(row_major, framebuffer_meter_levels)
     palette = bytearray(palette_rgb565(palette_colors))
     if native_overlay:
         metadata = native_display_metadata(
@@ -2280,6 +2539,7 @@ def render_mixer_display(
             muted,
             saved_levels,
             preview_levels,
+            display_mode=display_mode,
             button_leds=button_leds,
             page_index=page_index,
             page_count=page_count,
@@ -2288,9 +2548,82 @@ def render_mixer_display(
             volume_meter_mode=volume_meter_mode,
             meter_levels=meter_levels,
             display_brightness=display_brightness,
+            badge_style=badge_style,
+            transient_volume_mask=transient_volume_mask,
         )
         palette[-len(metadata):] = metadata
     return bytes(palette) + pack_device_framebuffer(row_major)
+
+
+def system_monitor_channels(
+    snapshot: SystemSnapshot | ConfiguredSystemSnapshot,
+) -> list[dict[str, str]]:
+    colors = ("#30CCBE", "#5B82F6", "#36D380", "#F6BE40")
+    return [
+        {"kind": "system", "label": label, "color": colors[index]}
+        for index, label in enumerate(snapshot.labels)
+    ]
+
+
+def render_system_monitor_display(
+    snapshot: SystemSnapshot | ConfiguredSystemSnapshot,
+    button_leds: list[int],
+    button_actions: list[str],
+    button_volume_presets: list[dict[str, int]],
+    meter_style: str,
+    display_brightness: int,
+    background_image: Path | None = None,
+) -> bytes:
+    levels = snapshot.levels
+    return render_mixer_display(
+        system_monitor_channels(snapshot),
+        [["system"] for _index in range(4)],
+        [False, False, False, False],
+        levels,
+        preview_levels=levels,
+        native_overlay=True,
+        background_image=background_image,
+        button_leds=button_leds,
+        page_index=0,
+        page_count=1,
+        meter_style=meter_style,
+        show_volume_meters=False,
+        volume_meter_mode="activity",
+        meter_levels=snapshot.meter_levels,
+        framebuffer_meter_levels=snapshot.meter_levels,
+        display_brightness=display_brightness,
+        button_actions=button_actions,
+        button_volume_presets=button_volume_presets,
+        display_mode="system",
+        system_source_ids=system_monitor_source_ids(snapshot),
+    )
+
+
+def update_system_monitor_display_metadata(
+    base_frame: bytes,
+    snapshot: SystemSnapshot | ConfiguredSystemSnapshot,
+    button_leds: list[int],
+    meter_style: str,
+    display_brightness: int,
+) -> bytes:
+    levels = snapshot.levels
+    return update_native_display_metadata(
+        base_frame,
+        system_monitor_channels(snapshot),
+        [["system"] for _index in range(4)],
+        [False, False, False, False],
+        levels,
+        level_override=levels,
+        display_mode="system",
+        button_leds=button_leds,
+        page_index=0,
+        page_count=1,
+        meter_style=meter_style,
+        show_volume_meters=False,
+        volume_meter_mode="activity",
+        meter_levels=snapshot.meter_levels,
+        display_brightness=display_brightness,
+    )
 
 
 def render_fullscreen_image_display(
@@ -2546,7 +2879,7 @@ def load_resident_display_frame(
         len(cached) != DISPLAY_MESSAGE_BYTES
         or cached[metadata_offset : metadata_offset + 4]
         not in NATIVE_METADATA_MAGICS
-        or cached[metadata_offset + 10] not in (1, 2, 3, 5)
+        or cached[metadata_offset + 10] not in (1, 2, 3, 5, 6)
     ):
         return fallback_frame
     return cached
@@ -2559,7 +2892,7 @@ def save_resident_display_frame(cache_path: Path, frame: bytes) -> None:
         len(frame) != DISPLAY_MESSAGE_BYTES
         or frame[metadata_offset : metadata_offset + 4]
         not in NATIVE_METADATA_MAGICS
-        or frame[metadata_offset + 10] not in (1, 2, 3, 5)
+        or frame[metadata_offset + 10] not in (1, 2, 3, 5, 6)
     ):
         raise RuntimeError("cannot cache an invalid resident display frame")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2777,7 +3110,25 @@ def load_display_mode(path: Path) -> str:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return "mixer"
     value = payload.get("display_mode", "mixer") if isinstance(payload, dict) else "mixer"
-    return value if value in {"mixer", "image", "notepad"} else "mixer"
+    return value if value in {"mixer", "image", "notepad", "system"} else "mixer"
+
+
+def load_system_monitor_sources(path: Path, monitor: SystemMonitor) -> list[str]:
+    try:
+        payload = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return monitor.default_source_ids()
+    value = payload.get("system_monitor_sources") if isinstance(payload, dict) else None
+    if not isinstance(value, list) or len(value) != 4 or not all(
+        isinstance(item, str) for item in value
+    ):
+        return monitor.default_source_ids()
+    available = {source["id"] for source in monitor.available_sources()}
+    defaults = monitor.default_source_ids()
+    return [
+        item if item in available else defaults[index]
+        for index, item in enumerate(value)
+    ]
 
 
 def load_notepad_text(path: Path) -> str:
@@ -3506,6 +3857,7 @@ def run_mixer(
     display_replay: Path | None,
     background_image: Path | None,
     display_mode: str,
+    badge_style: str,
     fullscreen_image: Path | None,
     notepad_text: str,
     notepad_style: dict[str, object],
@@ -3570,6 +3922,7 @@ def run_mixer(
         display_label = {
             "image": "full-screen image",
             "notepad": "notepad",
+            "system": "system monitor",
         }.get(display_mode, "mixer")
         print(f"  Display: {display_label}")
         print("\nCalibrating for half a second...")
@@ -3596,6 +3949,16 @@ def run_mixer(
         next_meter_update = 0.0
         next_meter_log = 0.0
         next_brightness_refresh = 0.0
+        system_monitor = SystemMonitor() if display_mode == "system" else None
+        system_monitor_sources = (
+            load_system_monitor_sources(config_path, system_monitor)
+            if system_monitor is not None else []
+        )
+        system_snapshot = (
+            system_monitor.sample_selected(system_monitor_sources)
+            if system_monitor is not None else None
+        )
+        next_system_sample = time.monotonic() + 1.0
         if (
             display_mode == "mixer"
             and show_volume_meters
@@ -3631,6 +3994,8 @@ def run_mixer(
         # icons immediately rather than waiting for the next timer tick.
         cached_streams_by_ch: list[list[dict]] = [[] for _ in channels]
         accumulators = [0, 0, 0, 0]
+        volume_label_deadlines = [0.0, 0.0, 0.0, 0.0]
+        rendered_volume_label_mask = 0
 
         if display_helper is not None and display_replay is not None:
             try:
@@ -3672,6 +4037,16 @@ def run_mixer(
                         page_count=len(pages),
                         display_brightness=display_brightness,
                     )
+                elif display_mode == "system" and system_snapshot is not None:
+                    display_base_frame = render_system_monitor_display(
+                        system_snapshot,
+                        programmable_leds,
+                        button_actions,
+                        button_volume_presets,
+                        meter_style,
+                        display_brightness,
+                        background_image=background_image,
+                    )
                 else:
                     display_base_frame = render_mixer_display(
                         channels,
@@ -3691,6 +4066,7 @@ def run_mixer(
                         streams_by_ch=initial_streams_by_ch,
                         button_actions=button_actions,
                         button_volume_presets=button_volume_presets,
+                        badge_style=badge_style,
                     )
                 # Sync the cached icon state so the hot-loop detects a change on
                 # the first tick and forces a full rebuild with icons.
@@ -3749,6 +4125,7 @@ def run_mixer(
             nonlocal previous_targets, accumulators, display_base_frame
             nonlocal prev_cached_streams_by_ch, cached_streams_by_ch
             nonlocal display_dirty, display_due
+            nonlocal volume_label_deadlines, rendered_volume_label_mask
             if new_page == current_page:
                 return True
             if new_page not in range(len(pages)):
@@ -3786,12 +4163,24 @@ def run_mixer(
                 )
             previous_targets = None
             accumulators = [0, 0, 0, 0]
+            volume_label_deadlines = [0.0, 0.0, 0.0, 0.0]
+            rendered_volume_label_mask = 0
             display_base_frame = None
             prev_cached_streams_by_ch = None
             cached_streams_by_ch = page_streams_by_ch
             display_dirty = True
             display_due = time.monotonic()
             return True
+
+        def reveal_volume_label(index: int) -> None:
+            """Temporarily show one tear-free Hercules-style native level."""
+            nonlocal display_dirty, display_due
+            if badge_style != "hercules" or display_mode != "mixer":
+                return
+            now = time.monotonic()
+            volume_label_deadlines[index] = now + HERCULES_VOLUME_LABEL_SECONDS
+            display_dirty = True
+            display_due = now + DISPLAY_SETTLE_SECONDS
 
         last_remote_command: dict[str, Any] | None = None
         remote_icon_signatures: dict[tuple[int, int], tuple[Any, ...]] = {}
@@ -3874,6 +4263,7 @@ def run_mixer(
                     display_dirty = True
                     volume_levels_dirty = True
                     display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+                    reveal_volume_label(index)
                 complete_remote_command(
                     remote_command,
                     succeeded,
@@ -3926,6 +4316,9 @@ def run_mixer(
                     display_dirty = True
                     volume_levels_dirty = True
                     display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+                    reveal_volume_label(
+                        button_volume_presets[index]["channel"] - 1
+                    )
             else:
                 succeeded = run_programmable_button_action(index + 1, action)
             complete_remote_command(
@@ -3989,6 +4382,17 @@ def run_mixer(
                 for remote_command in remote_bridge.drain():
                     apply_remote_command(remote_command)
                 publish_remote_state()
+            volume_label_mask = sum(
+                1 << index
+                for index, deadline in enumerate(volume_label_deadlines)
+                if deadline > now
+            )
+            if (
+                volume_label_mask != rendered_volume_label_mask
+                and display_base_frame is not None
+            ):
+                display_dirty = True
+                display_due = now
             if now >= next_brightness_refresh:
                 refreshed_brightness = load_display_brightness(config_path)
                 if refreshed_brightness != display_brightness:
@@ -4028,11 +4432,24 @@ def run_mixer(
                     refreshed_volume_levels = channel_levels(
                         targets, muted, saved_levels
                     )
-                    if [round(level * 100) for level in refreshed_volume_levels] != [
+                    refreshed_percentages = [
+                        round(level * 100) for level in refreshed_volume_levels
+                    ]
+                    displayed_percentages = [
                         round(level * 100) for level in display_volume_levels
-                    ]:
+                    ]
+                    changed_volume_indices = [
+                        index
+                        for index, (refreshed, displayed) in enumerate(
+                            zip(refreshed_percentages, displayed_percentages)
+                        )
+                        if refreshed != displayed
+                    ]
+                    if changed_volume_indices:
                         display_dirty = True
                         display_due = now
+                        for index in changed_volume_indices:
+                            reveal_volume_label(index)
                     display_volume_levels = refreshed_volume_levels
                     volume_levels_dirty = False
                     if level_monitor is not None:
@@ -4054,7 +4471,33 @@ def run_mixer(
                     print(f"PipeWire discovery failed: {error}", file=sys.stderr)
                 next_refresh = now + 1.0
 
-            if level_monitor is not None and now >= next_meter_update:
+            if (
+                system_monitor is not None
+                and system_snapshot is not None
+                and now >= next_system_sample
+            ):
+                system_snapshot = system_monitor.sample_selected(
+                    system_monitor_sources
+                )
+                next_system_sample = now + 1.0
+                # System Monitor owns its complete framebuffer. Rebuild it at
+                # the metric sampling cadence so no Mixer meter objects need
+                # to be enabled or refreshed by the firmware.
+                display_base_frame = None
+                display_dirty = True
+                display_due = min(display_due, now) if display_due else now
+                if now >= next_meter_log:
+                    values = system_snapshot.levels
+                    print(
+                        "System monitor: "
+                        + ", ".join(
+                            f"{label} {round(value * 100)}%"
+                            for label, value in zip(system_snapshot.labels, values)
+                        ),
+                        flush=True,
+                    )
+                    next_meter_log = now + 5.0
+            elif level_monitor is not None and now >= next_meter_update:
                 display_meter_levels = level_monitor.levels(display_volume_levels)
                 meter_values = tuple(
                     max(0, min(15, round(level * 15)))
@@ -4099,6 +4542,11 @@ def run_mixer(
                             volume_levels_dirty = False
                         rebuilt_base_frame = False
                         if display_base_frame is None:
+                            volume_label_mask = sum(
+                                1 << index
+                                for index, deadline in enumerate(volume_label_deadlines)
+                                if deadline > now
+                            )
                             if display_mode == "image":
                                 display_frame = render_fullscreen_image_display(
                                     channels,
@@ -4124,6 +4572,19 @@ def run_mixer(
                                     page_count=len(pages),
                                     display_brightness=display_brightness,
                                 )
+                            elif (
+                                display_mode == "system"
+                                and system_snapshot is not None
+                            ):
+                                display_frame = render_system_monitor_display(
+                                    system_snapshot,
+                                    programmable_leds,
+                                    button_actions,
+                                    button_volume_presets,
+                                    meter_style,
+                                    display_brightness,
+                                    background_image=background_image,
+                                )
                             else:
                                 display_frame = render_mixer_display(
                                     channels,
@@ -4143,10 +4604,21 @@ def run_mixer(
                                     streams_by_ch=cached_streams_by_ch,
                                     button_actions=button_actions,
                                     button_volume_presets=button_volume_presets,
+                                    badge_style=badge_style,
+                                    transient_volume_mask=volume_label_mask,
                                 )
                             display_base_frame = display_frame
                             last_display_base_frame = display_base_frame
+                            rendered_volume_label_mask = volume_label_mask
                             rebuilt_base_frame = True
+                        elif display_mode == "system" and system_snapshot is not None:
+                            display_frame = update_system_monitor_display_metadata(
+                                display_base_frame,
+                                system_snapshot,
+                                programmable_leds,
+                                meter_style,
+                                display_brightness,
+                            )
                         else:
                             display_frame = update_native_display_metadata(
                                 display_base_frame,
@@ -4164,12 +4636,16 @@ def run_mixer(
                                 volume_meter_mode=volume_meter_mode,
                                 meter_levels=display_meter_levels,
                                 display_brightness=display_brightness,
+                                badge_style=badge_style,
+                                transient_volume_mask=volume_label_mask,
                             )
                         display.submit(display_frame)
+                        rendered_volume_label_mask = volume_label_mask
                         if (
                             display_cache is not None
                             and last_display_base_frame is not None
                             and rebuilt_base_frame
+                            and rendered_volume_label_mask == 0
                         ):
                             save_resident_display_frame(
                                 display_cache, last_display_base_frame
@@ -4217,6 +4693,7 @@ def run_mixer(
                         display_dirty = True
                         volume_levels_dirty = True
                         display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+                        reveal_volume_label(encoder - 1)
                     elif change_volume(channel_targets, sign * steps):
                         accumulators[encoder - 1] -= sign * steps * counts_per_percent
                         print(
@@ -4226,6 +4703,7 @@ def run_mixer(
                         display_dirty = True
                         volume_levels_dirty = True
                         display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+                        reveal_volume_label(encoder - 1)
                     elif channel_targets:
                         accumulators[encoder - 1] = 0
 
@@ -4266,6 +4744,9 @@ def run_mixer(
                         display_dirty = True
                         volume_levels_dirty = True
                         display_due = time.monotonic() + DISPLAY_SETTLE_SECONDS
+                        reveal_volume_label(
+                            button_volume_presets[button - 1]["channel"] - 1
+                        )
                 else:
                     run_programmable_button_action(button, action)
 
@@ -4364,6 +4845,7 @@ def main() -> int:
         button_masks = load_button_masks(args.config)
         background_image = load_background_path(args.config)
         display_mode = load_display_mode(args.config)
+        badge_style = load_badge_style(args.config)
         fullscreen_image = load_fullscreen_image_path(args.config)
         notepad_text = load_notepad_text(args.config)
         notepad_style = load_notepad_style(args.config)
@@ -4388,6 +4870,7 @@ def main() -> int:
             None if args.no_display else args.display_replay,
             background_image,
             display_mode,
+            badge_style,
             fullscreen_image,
             notepad_text,
             notepad_style,

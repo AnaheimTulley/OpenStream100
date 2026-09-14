@@ -16,12 +16,13 @@ the hardware in front of you.
 
 - Control four PipeWire applications, outputs, or inputs at a time.
 - Create up to eight mixer pages, each with its own assignments and colours.
-- Adjust volume with the four hardware encoders and soft-mute with the four
-  buttons beneath them.
+- Adjust volume with the four hardware encoders and soft-mute by pressing each
+  knob straight down.
 - Show live mono or stereo activity meters with Classic, Segmented, Rounded, or
   Slim visualiser styles.
-- Display the assigned applications' icons, volume markers, and percentage
-  badges directly on the controller.
+- Choose OpenStream badges with persistent icons and percentages, or the
+  Hercules-style layout with larger centred icons and percentages that briefly
+  replace app names only while volume changes.
 - Adjust encoder sensitivity and screen brightness, with settings retained
   between sessions.
 
@@ -39,13 +40,20 @@ Assigned buttons illuminate automatically. Media actions use `playerctl`.
 
 ### Controller display
 
-OpenStream100 supports three display modes:
+OpenStream100 supports four display modes:
 
 - **Mixer** — live channel names, icons, volume, mute state, and audio meters.
 - **Full-screen image** — edge-to-edge PNG, JPEG, WebP, or BMP artwork while the
   physical audio controls continue working.
 - **Notepad** — typed or pasted reference text with saved font size, family,
   weight, colour, and alignment.
+- **System monitor** — four independently assignable live columns for detected
+  CPU, GPU, memory, and mounted-disk sources. Separate GPUs are identified by
+  PCI address; CPU and GPU sources include temperature when Linux exposes it.
+- **System tray** — keep OpenStream100 available from the desktop indicator,
+  with quick actions to open the control panel and start, stop, or restart the mixer.
+- **Live display preview** — inspect unsaved Mixer, image, Notepad, and System
+  Monitor settings at the controller's native aspect ratio before applying them.
 
 The mixer can use a custom background and one of several button-label overlays.
 A transparent 480×80 template can also be exported and edited to create a
@@ -61,6 +69,16 @@ physical controller is disconnected.
 The companion **OpenStream100 Remote** Android app provides a landscape
 four-channel mixer with smooth touch faders, live meters, mute controls, page
 navigation, programmable buttons, and assigned application icons.
+
+The Linux control panel groups its settings into **Mixer**, **Buttons**,
+**Display**, and **Android app** tabs. Mixer-page management sits at the top of
+the Mixer tab, while the main service controls remain visible between sections.
+The Display tab shows only the settings relevant to its selected display mode.
+
+The Linux control panel checks GitHub for newer stable releases at most once a
+day and also provides a manual **Check for updates** button. Updates are shown
+as a link to their release page and are never downloaded or installed
+automatically.
 
 ## System requirements
 
@@ -86,19 +104,19 @@ The release includes `SHA256SUMS` for verifying downloaded files.
 ### Fedora
 
 ```bash
-sudo dnf install ./hercules-stream100-0.17.2-1.fc44.x86_64.rpm
+sudo dnf install ./hercules-stream100-0.18.1-1.fc44.x86_64.rpm
 ```
 
 ### Debian or Ubuntu
 
 ```bash
-sudo apt install ./hercules-stream100_0.17.2-1_amd64.deb
+sudo apt install ./hercules-stream100_0.18.1-1_amd64.deb
 ```
 
 ### Arch Linux and derivatives
 
 ```bash
-sudo pacman -U ./hercules-stream100-0.17.2-1-x86_64.pkg.tar.zst
+sudo pacman -U ./hercules-stream100-0.18.1-1-x86_64.pkg.tar.zst
 ```
 
 The maintained `PKGBUILD` and its build instructions are available in

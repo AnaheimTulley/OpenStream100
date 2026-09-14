@@ -14,7 +14,7 @@
       with four visualiser styles,
       knob sensitivity,
       programmable buttons and LEDs,
-      full-screen image and notepad content, a resizable mouse-controlled virtual
+      full-screen image, notepad content, and a native-bar system monitor, a resizable mouse-controlled virtual
       mixer, a PIN-paired Android remote with per-device revocation,
       sign-in startup, service status, and the controller's full-screen
       480x272 display.
@@ -26,6 +26,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.18.1" date="2026-09-14">
+      <description>
+        <p>Adds a native-bar system monitor; reorganises the control panel into focused tabs; adds automatic update checks; and adds selectable OpenStream and Hercules badge layouts with larger centred icons and temporary volume text.</p>
+      </description>
+    </release>
     <release version="0.17.2" date="2026-09-12">
       <description>
         <p>Adds guided knob-mute calibration that pauses and restores the mixer automatically and distinguishes knob presses from the numbered programmable buttons.</p>

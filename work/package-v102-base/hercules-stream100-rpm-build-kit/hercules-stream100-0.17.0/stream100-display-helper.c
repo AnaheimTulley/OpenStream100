@@ -29,6 +29,8 @@
 #define DEFAULT_DISPLAY_BRIGHTNESS 100
 #define DEFAULT_METER_STYLE 1
 #define MAX_METER_STYLE 4
+#define BADGE_STYLE_OPENSTREAM 0
+#define BADGE_STYLE_HERCULES 1
 #define STARTUP_LOGO_BRIGHTNESS 45
 #define STARTUP_LOGO_HEARTBEATS 45
 #define REPLAY_PACKET_COUNT \
@@ -1021,6 +1023,47 @@ static int send_short_message(libusb_context *context,
     return result;
 }
 
+static int send_framebuffer_chunk(libusb_context *context,
+                                  libusb_device_handle *device,
+                                  unsigned char chunk,
+                                  const unsigned char *pixels,
+                                  uint16_t *next_sequence) {
+    unsigned char transfer[(1 + FRAME_MESSAGE_PACKETS) * ISO_PACKET_SIZE] = {0};
+    unsigned char *message = transfer + ISO_PACKET_SIZE;
+    static const unsigned char pixel_header[9] = {
+        0x37, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x0f,
+    };
+    const size_t message_length = 8u + sizeof(pixel_header) + CHUNK_SIZE + 1u;
+    memcpy(transfer, "HERCULES", 8);
+    message[0] = 'S';
+    message[1] = 'M';
+    message[2] = (unsigned char)(message_length & 0xffu);
+    message[3] = (unsigned char)(message_length >> 8);
+    const uint16_t sequence = *next_sequence;
+    message[6] = (unsigned char)(sequence & 0xffu);
+    message[7] = (unsigned char)(sequence >> 8);
+    memcpy(message + 8, pixel_header, sizeof(pixel_header));
+    message[10] = chunk;
+    memcpy(message + 8 + sizeof(pixel_header), pixels, CHUNK_SIZE);
+    const uint16_t crc = stream100_crc(message, message_length);
+    message[4] = (unsigned char)(crc & 0xffu);
+    message[5] = (unsigned char)(crc >> 8);
+    const int result = send_packet_group(
+        context, device, transfer, 1 + FRAME_MESSAGE_PACKETS);
+    if (result == LIBUSB_SUCCESS) {
+        *next_sequence = (uint16_t)(sequence + 1u);
+    }
+    return result;
+}
+
+static int send_framebuffer_latch(libusb_context *context,
+                                  libusb_device_handle *device,
+                                  uint16_t *next_sequence) {
+    static const unsigned char body[2] = {0x17, 0x00};
+    return send_short_message(
+        context, device, body, sizeof(body), next_sequence);
+}
+
 static int send_native_button_leds(libusb_context *context,
                                    libusb_device_handle *device,
                                    const unsigned char states[4],
@@ -1284,12 +1327,18 @@ static int percentage_digit_pixel(int digit, int x, int y) {
     return (digits[digit][y] & (1u << (2 - x))) != 0;
 }
 
+static int percentage_mark_pixel(int x, int y) {
+    static const unsigned char rows[5] = {0x5, 0x1, 0x2, 0x4, 0x5};
+    return (rows[y] & (1u << (2 - x))) != 0;
+}
+
 static unsigned int percentage_badge_pixel(int channel,
                                            unsigned int level,
                                            int muted,
                                            int online,
                                            const unsigned char channel_colors[4][3],
                                            const uint16_t badge_backdrop[32][BADGE_BACKDROP_COLUMNS],
+                                           int compact,
                                            int x,
                                            int y) {
     const unsigned int background =
@@ -1297,6 +1346,63 @@ static unsigned int percentage_badge_pixel(int channel,
     const unsigned int foreground = native_rgb565(255, 255, 255);
     const unsigned int panel_background = badge_backdrop == NULL ?
         native_rgb565(24, 31, 42) : badge_backdrop[y][x / 8];
+    if (compact) {
+        /* A live 0x35 object cannot reliably mix transparency with opaque
+         * pixels. Replace the whole icon temporarily instead of approximating
+         * the detailed icon behind it from sparse framebuffer samples. */
+        if (x == 0 || x == 31 || y == 0 || y == 31) {
+            return 0xf0000u;
+        }
+        if (!online) {
+            return 0xf0000u |
+                (((y == 15 || y == 16) &&
+                  ((x >= 8 && x <= 13) || (x >= 18 && x <= 23)))
+                    ? foreground : background);
+        }
+
+        if (level > 100u) {
+            level = 100u;
+        }
+        int compact_values[3] = {0, 0, 0};
+        int compact_count = 1;
+        compact_values[0] = (int)level;
+        if (level >= 100u) {
+            compact_count = 3;
+            compact_values[0] = 1;
+            compact_values[1] = 0;
+            compact_values[2] = 0;
+        } else if (level >= 10u) {
+            compact_count = 2;
+            compact_values[0] = (int)(level / 10u);
+            compact_values[1] = (int)(level % 10u);
+        }
+        const int glyph_scale = 2;
+        const int glyph_width = 3 * glyph_scale;
+        const int glyph_slot = glyph_width + 1;
+        const int compact_width = compact_count * glyph_slot + glyph_width;
+        const int compact_left = (32 - compact_width) / 2;
+        const int compact_top = 11;
+        if (y >= compact_top && y < compact_top + 5 * glyph_scale) {
+            for (int digit = 0; digit < compact_count; ++digit) {
+                const int digit_left = compact_left + digit * glyph_slot;
+                if (x >= digit_left && x < digit_left + glyph_width &&
+                        percentage_digit_pixel(
+                            compact_values[digit],
+                            (x - digit_left) / glyph_scale,
+                            (y - compact_top) / glyph_scale)) {
+                    return 0xf0000u | foreground;
+                }
+            }
+            const int mark_left = compact_left + compact_count * glyph_slot;
+            if (x >= mark_left && x < mark_left + glyph_width &&
+                    percentage_mark_pixel(
+                        (x - mark_left) / glyph_scale,
+                        (y - compact_top) / glyph_scale)) {
+                return 0xf0000u | foreground;
+            }
+        }
+        return 0xf0000u | background;
+    }
     /* The firmware reserves a fixed 32x32 object. Draw a smaller 24x24 badge
      * at its top and camouflage the remaining pixels with samples from the
      * committed framebuffer. Mixed transparent/opaque runs render as stripes
@@ -1372,6 +1478,7 @@ static int send_native_percentage_badge(libusb_context *context,
                                         int online,
                                         const unsigned char channel_colors[4][3],
                                         const uint16_t badge_backdrop[32][BADGE_BACKDROP_COLUMNS],
+                                        int compact,
                                         uint16_t *next_sequence) {
     unsigned char compressed[32 * 32 * 3];
     size_t compressed_length = 0;
@@ -1380,12 +1487,12 @@ static int send_native_percentage_badge(libusb_context *context,
         while (x < 32) {
             const unsigned int color = percentage_badge_pixel(
                 channel, level, muted, online, channel_colors,
-                badge_backdrop, x, y);
+                badge_backdrop, compact, x, y);
             int run = 1;
             while (x + run < 32 &&
                     percentage_badge_pixel(channel, level, muted, online,
                                            channel_colors, badge_backdrop,
-                                           x + run, y) == color) {
+                                           compact, x + run, y) == color) {
                 run += 1;
             }
             const int reaches_row_end = x + run == 32;
@@ -1470,11 +1577,15 @@ static int read_native_metadata(const unsigned char *frame,
                                 unsigned char *page_count,
                                 unsigned char *meter_style,
                                 unsigned char *volume_meters,
+                                unsigned char *badge_style,
+                                unsigned char *transient_volume_mask,
                                 unsigned char *display_brightness) {
     memcpy(channel_colors, default_channel_colors,
            sizeof(default_channel_colors));
     memset(button_leds, 0, 4);
     *volume_meters = 0;
+    *badge_style = BADGE_STYLE_OPENSTREAM;
+    *transient_volume_mask = 0;
     *meter_style = DEFAULT_METER_STYLE;
     *display_brightness = DEFAULT_DISPLAY_BRIGHTNESS;
     memset(meter_left_levels, 0, 4);
@@ -1502,7 +1613,8 @@ static int read_native_metadata(const unsigned char *frame,
         *online_mask = metadata[9] & 0x0fu;
         *display_mode = metadata[10] == 2 ? 2 :
             (metadata[10] == 3 ? 3 :
-             (metadata[10] == 4 ? 4 : (metadata[10] == 5 ? 5 : 1)));
+             (metadata[10] == 4 ? 4 :
+              (metadata[10] == 5 ? 5 : (metadata[10] == 6 ? 6 : 1))));
         memcpy(channel_colors, metadata + 12, 12);
         const unsigned char encoded_meter_style = metadata[28] >> 4;
         *meter_style = encoded_meter_style < MAX_METER_STYLE
@@ -1521,7 +1633,10 @@ static int read_native_metadata(const unsigned char *frame,
         const unsigned char encoded_page_count = metadata[29] & 0x0fu;
         *page_count = encoded_page_count >= 1 && encoded_page_count <= 8 ?
             encoded_page_count : 1;
-        *volume_meters = metadata[30] <= 2 ? metadata[30] : 0;
+        *volume_meters = metadata[30] & 0x03u;
+        *badge_style = (metadata[30] & 0x04u) != 0
+            ? BADGE_STYLE_HERCULES : BADGE_STYLE_OPENSTREAM;
+        *transient_volume_mask = metadata[30] >> 4;
         return 1;
     }
 
@@ -1562,6 +1677,8 @@ static int send_native_percentages(libusb_context *context,
                                    const unsigned char channel_colors[4][3],
                                    const uint16_t badge_backdrops[4][32][BADGE_BACKDROP_COLUMNS],
                                    unsigned char volume_meters,
+                                   unsigned char badge_style,
+                                   unsigned char transient_volume_mask,
                                    int force,
                                    unsigned char previous_levels[4],
                                    unsigned char previous_meter_left_levels[4],
@@ -1569,6 +1686,8 @@ static int send_native_percentages(libusb_context *context,
                                    unsigned char *previous_muted_mask,
                                    unsigned char *previous_online_mask,
                                    unsigned char *previous_meter_mode,
+                                   unsigned char *previous_badge_style,
+                                   unsigned char *previous_transient_volume_mask,
                                    uint16_t *next_sequence) {
     int badge_updates = 0;
     int volume_marker_updates = 0;
@@ -1578,41 +1697,59 @@ static int send_native_percentages(libusb_context *context,
         const int state_changed =
             ((muted_mask ^ *previous_muted_mask) & bit) != 0 ||
             ((online_mask ^ *previous_online_mask) & bit) != 0;
-        const int badge_changed =
-            force || levels[channel] != previous_levels[channel] ||
-            state_changed;
+        const int badge_style_changed = badge_style != *previous_badge_style;
+        const int transient_changed =
+            ((transient_volume_mask ^ *previous_transient_volume_mask) & bit) != 0;
+        const int transient_active = (transient_volume_mask & bit) != 0;
+        const int badge_changed = force || badge_style_changed ||
+            (badge_style == BADGE_STYLE_OPENSTREAM &&
+             (levels[channel] != previous_levels[channel] || state_changed)) ||
+            (badge_style == BADGE_STYLE_HERCULES &&
+             (transient_changed ||
+              (transient_active &&
+               (levels[channel] != previous_levels[channel] || state_changed))));
         const int volume_marker_changed =
             force || state_changed || volume_meters != *previous_meter_mode ||
             levels[channel] != previous_levels[channel];
-        /* Mode 2 is a live VU stream. Re-emit its 0x40 sample for every
+        /* Modes 2 and 3 are live streams. Re-emit their 0x40 samples for every
          * metadata frame even if the compact 4-bit value has not changed.
          * The firmware does not retain a steady sample like a framebuffer
          * pixel, and suppressing equal values made continuous audio appear as
          * a brief bar only when it crossed a quantisation boundary. */
         const int activity_changed =
-            volume_meters == 2 || force || state_changed ||
+            volume_meters == 2 || volume_meters == 3 || force || state_changed ||
             volume_meters != *previous_meter_mode ||
             meter_left_levels[channel] !=
                 previous_meter_left_levels[channel] ||
             meter_right_levels[channel] !=
                 previous_meter_right_levels[channel];
         if (badge_changed) {
-            const int result = send_native_percentage_badge(
-                context, device, channel, levels[channel],
-                (muted_mask & bit) != 0, (online_mask & bit) != 0,
-                channel_colors, badge_backdrops[channel],
-                next_sequence);
+            int result;
+            if (badge_style == BADGE_STYLE_HERCULES && !transient_active) {
+                result = send_native_transparent_badge(
+                    context, device, channel, next_sequence);
+            } else {
+                result = send_native_percentage_badge(
+                    context, device, channel, levels[channel],
+                    (muted_mask & bit) != 0, (online_mask & bit) != 0,
+                    channel_colors, badge_backdrops[channel],
+                    badge_style == BADGE_STYLE_HERCULES,
+                    next_sequence);
+            }
             if (result != LIBUSB_SUCCESS) {
                 return result;
             }
             badge_updates += 1;
         }
-        if ((volume_meters == 2 && activity_changed) ||
-            (volume_meters == 1 && *previous_meter_mode == 2)) {
+        if (((volume_meters == 2 || volume_meters == 3) && activity_changed) ||
+            ((volume_meters == 0 || volume_meters == 1) &&
+             (*previous_meter_mode == 2 || *previous_meter_mode == 3))) {
             unsigned int left_activity_percent =
-                volume_meters == 2 ? meter_left_levels[channel] : 0;
+                (volume_meters == 2 || volume_meters == 3)
+                ? meter_left_levels[channel] : 0;
             unsigned int right_activity_percent =
-                volume_meters == 2 ? meter_right_levels[channel] : 0;
+                (volume_meters == 2 || volume_meters == 3)
+                ? meter_right_levels[channel] : 0;
             if ((muted_mask & bit) != 0 || (online_mask & bit) == 0) {
                 left_activity_percent = 0;
                 right_activity_percent = 0;
@@ -1629,7 +1766,8 @@ static int send_native_percentages(libusb_context *context,
             }
             activity_updates += 1;
         }
-        if (volume_meters && volume_marker_changed) {
+        if (volume_meters != 0 && volume_meters != 3 &&
+            volume_marker_changed) {
             unsigned int volume_percent = levels[channel];
             if ((muted_mask & bit) != 0 || (online_mask & bit) == 0) {
                 volume_percent = 0;
@@ -1646,14 +1784,18 @@ static int send_native_percentages(libusb_context *context,
         previous_levels[channel] = levels[channel];
         previous_meter_left_levels[channel] = meter_left_levels[channel];
         previous_meter_right_levels[channel] = meter_right_levels[channel];
-        if (badge_changed || (volume_meters && volume_marker_changed) ||
-            (volume_meters == 2 && activity_changed)) {
+        if (badge_changed ||
+            (volume_meters != 0 && volume_meters != 3 &&
+             volume_marker_changed) ||
+            ((volume_meters == 2 || volume_meters == 3) && activity_changed)) {
             sleep_ms(NATIVE_MESSAGE_GAP_MS);
         }
     }
     *previous_muted_mask = muted_mask;
     *previous_online_mask = online_mask;
     *previous_meter_mode = volume_meters;
+    *previous_badge_style = badge_style;
+    *previous_transient_volume_mask = transient_volume_mask;
     if (badge_updates != 0) {
         fprintf(stderr,
                 "Native percentage objects updated: %d channel%s.\n",
@@ -1843,6 +1985,7 @@ static int send_native_meter_state(libusb_context *context,
                                    libusb_device_handle *device,
                                    unsigned char surface,
                                    int enabled,
+                                   int include_volume_marker,
                                    unsigned char meter_style,
                                    const unsigned char *channel_color,
                                    uint16_t *next_sequence) {
@@ -1878,7 +2021,7 @@ static int send_native_meter_state(libusb_context *context,
         cursor += 7;
     }
 
-    /* Restore the two resident level values used immediately before the
+    /* Restore the resident activity level used immediately before the
      * official application installs the active meter configuration. */
     body[cursor++] = 0x40;
     body[cursor++] = surface;
@@ -1886,13 +2029,18 @@ static int send_native_meter_state(libusb_context *context,
     body[cursor++] = 0;
     body[cursor++] = 0;
     body[cursor++] = 0;
-    body[cursor++] = 0x41;
-    body[cursor++] = surface;
-    body[cursor++] = 0;
-    body[cursor++] = 0xc0;
-    body[cursor++] = 0;
-    body[cursor++] = 0xc0;
-    body[cursor++] = 0;
+    if (include_volume_marker) {
+        /* 0x41 creates the independent white volume-position marker. System
+         * Monitor uses only the coloured 0x40 activity fill, so omitting this
+         * object prevents a fixed white line from being instantiated. */
+        body[cursor++] = 0x41;
+        body[cursor++] = surface;
+        body[cursor++] = 0;
+        body[cursor++] = 0xc0;
+        body[cursor++] = 0;
+        body[cursor++] = 0xc0;
+        body[cursor++] = 0;
+    }
     return send_short_message(context, device, body, cursor, next_sequence);
 }
 
@@ -1900,6 +2048,7 @@ static int set_native_meter_surfaces(libusb_context *context,
                                      libusb_device_handle *device,
                                      int enable_first,
                                      int enable_second,
+                                     int include_volume_marker,
                                      unsigned char meter_style,
                                      const unsigned char channel_colors[4][3],
                                      uint16_t *next_sequence) {
@@ -1908,14 +2057,16 @@ static int set_native_meter_surfaces(libusb_context *context,
             channel_colors == NULL ? NULL : channel_colors[channel];
         const int first_result = send_native_meter_state(
             context, device, (unsigned char)channel,
-            enable_first, meter_style, channel_color, next_sequence);
+            enable_first, include_volume_marker,
+            meter_style, channel_color, next_sequence);
         if (first_result != LIBUSB_SUCCESS) {
             return first_result;
         }
         sleep_ms(NATIVE_MESSAGE_GAP_MS);
         const int second_result = send_native_meter_state(
             context, device, (unsigned char)(0x80 | channel),
-            enable_second, meter_style, channel_color, next_sequence);
+            enable_second, include_volume_marker,
+            meter_style, channel_color, next_sequence);
         if (second_result != LIBUSB_SUCCESS) {
             return second_result;
         }
@@ -1951,7 +2102,8 @@ static int activate_fullscreen_layout(libusb_context *context,
     return set_native_meter_surfaces(
         context, device,
         volume_meters ? 1 : 0,
-        volume_meters ? 1 : 0,
+        volume_meters && volume_meters != 3 ? 1 : 0,
+        volume_meters != 0 && volume_meters != 3,
         meter_style,
         channel_colors,
         next_sequence);
@@ -1976,7 +2128,7 @@ static int activate_fullscreen_image_layout(libusb_context *context,
     }
     sleep_ms(NATIVE_MESSAGE_GAP_MS);
     return set_native_meter_surfaces(
-        context, device, 0, 0, DEFAULT_METER_STYLE, NULL, next_sequence);
+        context, device, 0, 0, 1, DEFAULT_METER_STYLE, NULL, next_sequence);
 }
 
 static int activate_notepad_layout(libusb_context *context,
@@ -2001,7 +2153,7 @@ static int activate_notepad_layout(libusb_context *context,
     }
     sleep_ms(NATIVE_MESSAGE_GAP_MS);
     return set_native_meter_surfaces(
-        context, device, 0, 0, DEFAULT_METER_STYLE, NULL, next_sequence);
+        context, device, 0, 0, 1, DEFAULT_METER_STYLE, NULL, next_sequence);
 }
 
 static int restore_native_compositor(libusb_context *context,
@@ -2022,7 +2174,7 @@ static int restore_native_compositor(libusb_context *context,
     }
     sleep_ms(NATIVE_MESSAGE_GAP_MS);
     return set_native_meter_surfaces(
-        context, device, 1, 1, DEFAULT_METER_STYLE, NULL, next_sequence);
+        context, device, 1, 1, 1, DEFAULT_METER_STYLE, NULL, next_sequence);
 }
 
 static int run_fullscreen_style_test(libusb_context *context,
@@ -2054,14 +2206,15 @@ static int run_fullscreen_style_test(libusb_context *context,
         }
         sleep_ms(NATIVE_MESSAGE_GAP_MS);
         result = set_native_meter_surfaces(
-            context, device, 0, 0, DEFAULT_METER_STYLE, NULL, next_sequence);
+            context, device, 0, 0, 1,
+            DEFAULT_METER_STYLE, NULL, next_sequence);
         if (result != LIBUSB_SUCCESS) {
             return result;
         }
         const int badge_result = send_native_percentage_badge(
             context, device,
             0, (unsigned int)phase,
-            0, 1, default_channel_colors, NULL, next_sequence);
+            0, 1, default_channel_colors, NULL, 0, next_sequence);
         if (badge_result != LIBUSB_SUCCESS) {
             return badge_result;
         }
@@ -2120,14 +2273,15 @@ static int run_action_zone_color_test(libusb_context *context,
         }
         sleep_ms(NATIVE_MESSAGE_GAP_MS);
         result = set_native_meter_surfaces(
-            context, device, 0, 0, DEFAULT_METER_STYLE, NULL, next_sequence);
+            context, device, 0, 0, 1,
+            DEFAULT_METER_STYLE, NULL, next_sequence);
         if (result != LIBUSB_SUCCESS) {
             return result;
         }
         const int badge_result = send_native_percentage_badge(
             context, device,
             0, (unsigned int)phase,
-            0, 1, default_channel_colors, NULL, next_sequence);
+            0, 1, default_channel_colors, NULL, 0, next_sequence);
         if (badge_result != LIBUSB_SUCCESS) {
             return badge_result;
         }
@@ -2281,6 +2435,8 @@ int main(int argc, char **argv) {
     unsigned char active_meter_style = DEFAULT_METER_STYLE;
     unsigned char active_palette[FRAME_METADATA_V2_OFFSET];
     int active_palette_valid = 0;
+    unsigned char active_framebuffer[FRAMEBUFFER_SIZE];
+    int active_framebuffer_valid = 0;
     int backlight_revealed = 0;
     unsigned char active_brightness = 0;
     int native_object_test_sent = 0;
@@ -2296,6 +2452,8 @@ int main(int argc, char **argv) {
     unsigned char previous_muted_mask = 0xff;
     unsigned char previous_online_mask = 0xff;
     unsigned char previous_meter_mode = 0xff;
+    unsigned char previous_badge_style = 0xff;
+    unsigned char previous_transient_volume_mask = 0xff;
     unsigned char previous_button_leds[4] = {0xff, 0xff, 0xff, 0xff};
     fprintf(stderr, "Waiting for the first generated framebuffer.\n");
 
@@ -2342,6 +2500,8 @@ int main(int argc, char **argv) {
         unsigned char native_page_count = 1;
         unsigned char native_meter_style = DEFAULT_METER_STYLE;
         unsigned char native_volume_meters = 0;
+        unsigned char native_badge_style = BADGE_STYLE_OPENSTREAM;
+        unsigned char native_transient_volume_mask = 0;
         unsigned char native_display_brightness = DEFAULT_DISPLAY_BRIGHTNESS;
         uint16_t native_badge_backdrops[4][32][BADGE_BACKDROP_COLUMNS];
         read_native_badge_backdrops(frame_input, native_badge_backdrops);
@@ -2356,6 +2516,8 @@ int main(int argc, char **argv) {
             &native_page_count,
             &native_meter_style,
             &native_volume_meters,
+            &native_badge_style,
+            &native_transient_volume_mask,
             &native_display_brightness);
         if (!has_native_metadata && is_black_startup_primer(frame_input)) {
             has_native_metadata = 1;
@@ -2411,9 +2573,42 @@ int main(int argc, char **argv) {
             if (usb_result != LIBUSB_SUCCESS) {
                 goto cleanup;
             }
-            if (native_display_mode == 1) {
-                if ((native_volume_meters != 0) !=
-                        (active_volume_meter_mode != 0) ||
+            if (native_display_mode == 1 || native_display_mode == 6) {
+                if (native_display_mode == 6 && active_framebuffer_valid) {
+                    int changed_chunks = 0;
+                    for (int chunk = 0; chunk < CHUNK_COUNT; ++chunk) {
+                        const unsigned char *new_pixels =
+                            frame_input + PALETTE_SIZE +
+                            (size_t)chunk * CHUNK_SIZE;
+                        unsigned char *old_pixels =
+                            active_framebuffer + (size_t)chunk * CHUNK_SIZE;
+                        if (memcmp(old_pixels, new_pixels, CHUNK_SIZE) == 0) {
+                            continue;
+                        }
+                        usb_result = send_framebuffer_chunk(
+                            context, device, (unsigned char)chunk,
+                            new_pixels, &next_sequence);
+                        if (usb_result != LIBUSB_SUCCESS) {
+                            goto cleanup;
+                        }
+                        memcpy(old_pixels, new_pixels, CHUNK_SIZE);
+                        changed_chunks += 1;
+                        sleep_ms(NATIVE_MESSAGE_GAP_MS);
+                    }
+                    if (changed_chunks != 0) {
+                        usb_result = send_framebuffer_latch(
+                            context, device, &next_sequence);
+                        if (usb_result != LIBUSB_SUCCESS) {
+                            goto cleanup;
+                        }
+                        fprintf(stderr,
+                                "Display updated %d changed pixel plane%s "
+                                "without a full redraw.\n",
+                                changed_chunks,
+                                changed_chunks == 1 ? "" : "s");
+                    }
+                }
+                if (native_volume_meters != active_volume_meter_mode ||
                     (native_volume_meters != 0 &&
                         native_meter_style != active_meter_style)) {
                     usb_result = activate_fullscreen_layout(
@@ -2437,12 +2632,15 @@ int main(int argc, char **argv) {
                     native_meter_left_levels, native_meter_right_levels,
                     native_muted_mask, native_online_mask,
                     native_channel_colors, native_badge_backdrops,
-                    native_volume_meters, 0,
+                    native_volume_meters, native_badge_style,
+                    native_transient_volume_mask, 0,
                     previous_levels,
                     previous_meter_left_levels,
                     previous_meter_right_levels,
                     &previous_muted_mask, &previous_online_mask,
                     &previous_meter_mode,
+                    &previous_badge_style,
+                    &previous_transient_volume_mask,
                     &next_sequence);
                 if (usb_result != LIBUSB_SUCCESS) {
                     goto cleanup;
@@ -2675,6 +2873,9 @@ int main(int argc, char **argv) {
             memcpy(active_palette, frame_input, FRAME_METADATA_V2_OFFSET);
             active_palette_valid = 1;
         }
+        memcpy(active_framebuffer, frame_input + PALETTE_SIZE,
+               FRAMEBUFFER_SIZE);
+        active_framebuffer_valid = 1;
 
         if (has_native_metadata && !native_object_test) {
             if (!fullscreen_mask_test) {
@@ -2756,12 +2957,15 @@ int main(int argc, char **argv) {
                     native_meter_left_levels, native_meter_right_levels,
                     native_muted_mask, native_online_mask,
                     native_channel_colors, native_badge_backdrops,
-                    native_volume_meters, 1,
+                    native_volume_meters, native_badge_style,
+                    native_transient_volume_mask, 1,
                     previous_levels,
                     previous_meter_left_levels,
                     previous_meter_right_levels,
                     &previous_muted_mask, &previous_online_mask,
                     &previous_meter_mode,
+                    &previous_badge_style,
+                    &previous_transient_volume_mask,
                     &next_sequence);
                 if (usb_result != LIBUSB_SUCCESS) {
                     goto cleanup;
@@ -2774,8 +2978,10 @@ int main(int argc, char **argv) {
             active_page_count = native_page_count;
             active_page_valid = 1;
             active_volume_meter_mode =
-                native_display_mode == 1 ? native_volume_meters : 0;
-            active_meter_style = native_display_mode == 1
+                (native_display_mode == 1 || native_display_mode == 6)
+                ? native_volume_meters : 0;
+            active_meter_style =
+                (native_display_mode == 1 || native_display_mode == 6)
                 ? native_meter_style
                 : DEFAULT_METER_STYLE;
         }

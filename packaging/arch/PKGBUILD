@@ -1,6 +1,6 @@
 # Maintainer: OpenStream100 contributors <openstream100@users.noreply.github.com>
 pkgname=hercules-stream100
-pkgver=0.17.2
+pkgver=0.18.1
 pkgrel=1
 pkgdesc="OpenStream100 PipeWire controller for Hercules Stream 100 hardware"
 arch=('x86_64' 'aarch64')
@@ -16,6 +16,7 @@ depends=(
     'hicolor-icon-theme'
     'libpulse'
     'libusb'
+    'libayatana-appindicator'
     'pipewire'
     'pipewire-pulse'
     'python'
@@ -41,9 +42,9 @@ source=(
     'arch-install-path.patch'
 )
 sha256sums=(
-    '741982814bd3a1152bd8b97d35de3d6500b7c508673489be0bd186df5360e678'
+    '1d789c9814f9259f6e32f6da9962a814afebf4eb7d72a315b1fa8ce36a6926a5'
     '9f58463f8ee2bfd099e207136b9308f56c4497984223d0324a658497eb4e24cf'
-    'ace0d0b3117652fea74ce7a8cf06920a9fc20fc05bd91097eb613a03264f636a'
+    'cdd3b4d39040a63d4394d03a431d0e285334675ba2e5edf18645aaede7486f7a'
 )
 
 _source_root="${pkgname}-${pkgver}"
@@ -69,6 +70,8 @@ check() {
 
     python -m py_compile \
         stream100-control.py \
+        stream100-tray.py \
+        stream100_preview.py \
         stream100-display-service.py \
         stream100-mixer.py \
         stream100-mixer-alpha.py \
@@ -77,11 +80,18 @@ check() {
         stream100-test-notepad.py \
         stream100-test-remote.py \
         stream100-test-virtual-mixer.py \
+        stream100-test-updates.py \
+        stream100-test-system-monitor.py \
+        stream100-test-badge-styles.py \
         stream100_channel_icons.py \
+        stream100_system_monitor.py \
         stream100_version.py
     python stream100-test-notepad.py
     python stream100-test-virtual-mixer.py
     python stream100-test-remote.py
+    python stream100-test-updates.py
+    python stream100-test-system-monitor.py
+    python stream100-test-badge-styles.py
 
     desktop-file-validate packaging/com.hercules.Stream100.desktop
     appstreamcli validate --no-net \
@@ -116,6 +126,7 @@ package() {
         run-stream100-mixer.sh \
         run-stream100-virtual-mixer.sh \
         stream100-control.py \
+        stream100-tray.py \
         stream100-display-helper \
         stream100-display-service.py \
         stream100-mixer.py \
@@ -125,6 +136,8 @@ package() {
 
     install -m0644 \
         stream100_remote.py \
+        stream100_preview.py \
+        stream100_system_monitor.py \
         stream100_channel_icons.py \
         stream100_version.py \
         button_labels_overlay_basic.png \
@@ -141,6 +154,7 @@ package() {
     install -m0644 \
         packaging/hercules-stream100.service \
         packaging/hercules-stream100-display.service \
+        packaging/hercules-stream100-tray.service \
         hercules-stream100-mixer.service \
         "${pkgdir}/usr/lib/systemd/user/"
     install -m0644 70-hercules-stream100.rules \

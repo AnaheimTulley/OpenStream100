@@ -2,7 +2,7 @@
 
 This directory builds OpenStream100 for Arch Linux and Arch-based distributions
 such as EndeavourOS, CachyOS, and Manjaro. The PKGBUILD downloads the official
-`v0.17.2` release source archive and verifies its SHA-256 checksum before
+`v0.18.1` release source archive and verifies its SHA-256 checksum before
 building.
 
 ## Build
@@ -15,7 +15,7 @@ cd packaging/arch
 ./build-stream100-arch.sh
 ```
 
-The finished `hercules-stream100-0.17.2-1-<architecture>.pkg.tar.zst` is written
+The finished `hercules-stream100-0.18.1-1-<architecture>.pkg.tar.zst` is written
 to `packaging/arch/dist/`. To build and install it in one operation, use:
 
 ```bash
@@ -25,7 +25,7 @@ to `packaging/arch/dist/`. To build and install it in one operation, use:
 You can also install a previously built package directly:
 
 ```bash
-sudo pacman -U dist/hercules-stream100-0.17.2-1-x86_64.pkg.tar.zst
+sudo pacman -U dist/hercules-stream100-0.18.1-1-x86_64.pkg.tar.zst
 systemctl --user daemon-reload
 systemctl --user enable --now hercules-stream100-display.service
 ```

@@ -35,6 +35,13 @@ index 1ce5824..1b6c87f 100644
 @@ -10 +10 @@ Type=simple
 -ExecStart=/usr/bin/bash /usr/libexec/hercules-stream100/run-stream100-mixer.sh --require-display-broker
 +ExecStart=/usr/bin/bash /usr/lib/hercules-stream100/run-stream100-mixer.sh --require-display-broker
+diff --git a/packaging/hercules-stream100-tray.service b/packaging/hercules-stream100-tray.service
+index 6d34c82..85c622a 100644
+--- a/packaging/hercules-stream100-tray.service
++++ b/packaging/hercules-stream100-tray.service
+@@ -7 +7 @@ Type=simple
+-ExecStart=/usr/bin/python3 /usr/libexec/hercules-stream100/stream100-tray.py
++ExecStart=/usr/bin/python3 /usr/lib/hercules-stream100/stream100-tray.py
 diff --git a/stream100-control.py b/stream100-control.py
 index 29b865e..624f5fc 100755
 --- a/stream100-control.py

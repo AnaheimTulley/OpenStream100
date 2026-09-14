@@ -10,12 +10,16 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 import webbrowser
+
+from stream100_system_monitor import SystemMonitor
+from stream100_preview import DisplayPreview
 
 
 APP_ID = "com.hercules.Stream100"
@@ -26,13 +30,20 @@ except ImportError:
     APP_VERSION = "unknown"
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = Path.home() / ".config" / "hercules-stream100" / "config.json"
+UPDATE_STATE_PATH = CONFIG_PATH.with_name("update-check.json")
+UPDATE_API_URL = (
+    "https://api.github.com/repos/AnaheimTulley/OpenStream100/releases/latest"
+)
+UPDATE_RELEASES_URL = "https://github.com/AnaheimTulley/OpenStream100/releases"
+UPDATE_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+UPDATE_REQUEST_TIMEOUT_SECONDS = 4.0
 BACKGROUND_PATH = CONFIG_PATH.with_name("background.png")
 FULLSCREEN_IMAGE_PATH = CONFIG_PATH.with_name("fullscreen-image.png")
 CUSTOM_BUTTON_OVERLAY_PATH = CONFIG_PATH.with_name("button-overlay-custom.png")
 BUTTON_OVERLAY_TEMPLATE_PATH = APP_DIR / "button_labels_overlay_template.png"
 BUTTON_OVERLAY_SIZE = (480, 80)
 BUTTON_OVERLAY_STYLES = ("boxes", "basic", "glass", "custom")
-DISPLAY_MODES = ("mixer", "image", "notepad")
+DISPLAY_MODES = ("mixer", "image", "notepad", "system")
 NOTEPAD_FONT_FAMILIES = ("sans", "serif", "monospace")
 NOTEPAD_FONT_FAMILY_LABELS = ("Sans", "Serif", "Monospace")
 NOTEPAD_FONT_STYLES = ("regular", "bold", "italic", "bold-italic")
@@ -50,7 +61,12 @@ DEFAULT_NOTEPAD_STYLE: dict[str, object] = {
     "alignment": "left",
 }
 DEFAULT_SHOW_VOLUME_METERS = True
-DEFAULT_SHOW_CHANNEL_ICONS = True
+BADGE_STYLE_CHOICES = (
+    ("openstream", "OpenStream Style (icon and percentage)"),
+    ("hercules", "Hercules Style (icon only)"),
+)
+BADGE_STYLES = tuple(style for style, _label in BADGE_STYLE_CHOICES)
+DEFAULT_BADGE_STYLE = "openstream"
 VOLUME_METER_MODES = ("activity", "volume")
 DEFAULT_VOLUME_METER_MODE = "activity"
 METER_CHANNEL_MODES = ("stereo", "mono")
@@ -87,6 +103,7 @@ DEFAULT_BUTTON_VOLUME_PRESETS = [
     {"channel": 4, "percentage": 50},
 ]
 SERVICE_NAME = "hercules-stream100.service"
+TRAY_SERVICE_NAME = "hercules-stream100-tray.service"
 SERVICE_PATH = Path.home() / ".config" / "systemd" / "user" / SERVICE_NAME
 SYSTEM_SERVICE_PATH = Path("/usr/lib/systemd/user") / SERVICE_NAME
 MIXER_RUNNER = APP_DIR / "run-stream100-mixer.sh"
@@ -108,6 +125,125 @@ DEFAULT_CHANNELS: list[dict[str, str]] = [
 
 def command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(arguments, check=False, capture_output=True, text=True)
+
+
+def parse_release_version(value: object) -> tuple[int, int, int] | None:
+    """Parse the stable three-part versions used by OpenStream100 releases."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text.startswith("v"):
+        text = text[1:]
+    parts = text.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+def normalise_release(payload: object) -> dict[str, str]:
+    """Validate and retain the small part of a GitHub release response we use."""
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub returned invalid release information.")
+    tag = payload.get("tag_name")
+    parsed = parse_release_version(tag)
+    url = payload.get("html_url")
+    if parsed is None or not isinstance(tag, str):
+        raise RuntimeError("GitHub returned an invalid release version.")
+    if not isinstance(url, str) or not url.startswith(f"{UPDATE_RELEASES_URL}/tag/"):
+        raise RuntimeError("GitHub returned an invalid release address.")
+    name = payload.get("name")
+    return {
+        "version": ".".join(str(part) for part in parsed),
+        "tag": tag,
+        "name": name.strip() if isinstance(name, str) and name.strip() else tag,
+        "url": url,
+    }
+
+
+def newer_release(
+    release: object,
+    current_version: object = APP_VERSION,
+) -> dict[str, str] | None:
+    """Return a validated release only when it is newer than this application."""
+    current = parse_release_version(current_version)
+    if current is None or not isinstance(release, dict):
+        return None
+    available = parse_release_version(release.get("version"))
+    if available is None or available <= current:
+        return None
+    url = release.get("url")
+    if not isinstance(url, str) or not url.startswith(f"{UPDATE_RELEASES_URL}/tag/"):
+        return None
+    return {
+        "version": ".".join(str(part) for part in available),
+        "tag": str(release.get("tag", f"v{release.get('version', '')}")),
+        "name": str(release.get("name", release.get("tag", "OpenStream100 update"))),
+        "url": url,
+    }
+
+
+def load_update_state(path: Path = UPDATE_STATE_PATH) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_update_state(payload: dict[str, Any], path: Path = UPDATE_STATE_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def update_check_due(
+    state: object,
+    now: float | None = None,
+    interval: float = UPDATE_CHECK_INTERVAL_SECONDS,
+) -> bool:
+    if not isinstance(state, dict):
+        return True
+    checked = state.get("last_checked")
+    if isinstance(checked, bool) or not isinstance(checked, (int, float)):
+        return True
+    current = time.time() if now is None else now
+    return checked > current or current - checked >= interval
+
+
+def fetch_latest_release(etag: str = "") -> tuple[dict[str, str] | None, str, bool]:
+    """Fetch GitHub's latest stable release, supporting conditional requests."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": f"OpenStream100/{APP_VERSION}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if etag:
+        headers["If-None-Match"] = etag
+    request = Request(UPDATE_API_URL, headers=headers)
+    try:
+        with urlopen(request, timeout=UPDATE_REQUEST_TIMEOUT_SECONDS) as response:
+            document = response.read(1024 * 1024 + 1)
+            if len(document) > 1024 * 1024:
+                raise RuntimeError("GitHub returned too much release information.")
+            response_etag = response.headers.get("ETag", etag)
+    except HTTPError as error:
+        if error.code == 304:
+            error.close()
+            return None, etag, True
+        if error.code in {403, 429}:
+            error.close()
+            raise RuntimeError("GitHub's update-check rate limit was reached.") from error
+        error.close()
+        raise RuntimeError(f"GitHub update check failed (HTTP {error.code}).") from error
+    except (URLError, TimeoutError, OSError) as error:
+        reason = getattr(error, "reason", error)
+        raise RuntimeError(f"Could not reach GitHub: {reason}") from error
+    try:
+        payload = json.loads(document.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("GitHub returned invalid release information.") from error
+    return normalise_release(payload), response_etag, False
 
 
 def calibration_command(
@@ -324,6 +460,17 @@ def load_saved_image(key: str) -> Path | None:
     return path if path.is_file() else None
 
 
+def preview_file_signature(path: Path | None) -> tuple[str, int, int] | None:
+    """Identify preview assets even when a new image replaces the same path."""
+    if path is None:
+        return None
+    try:
+        source_stat = path.stat()
+        return (str(path), source_stat.st_mtime_ns, source_stat.st_size)
+    except OSError:
+        return (str(path), 0, 0)
+
+
 def save_saved_image(key: str, path: Path | None) -> None:
     payload = read_config_payload()
     if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
@@ -460,6 +607,40 @@ def save_display_mode(mode: str) -> None:
     write_config_payload(payload)
 
 
+def discover_system_monitor_sources() -> list[dict[str, str]]:
+    return SystemMonitor().available_sources()
+
+
+def load_system_monitor_source_ids(
+    sources: list[dict[str, str]],
+) -> list[str]:
+    monitor = SystemMonitor()
+    defaults = monitor.default_source_ids()
+    available = {source["id"] for source in sources}
+    value = read_config_payload().get("system_monitor_sources")
+    if not isinstance(value, list) or len(value) != 4 or not all(
+        isinstance(item, str) for item in value
+    ):
+        value = defaults
+    return [
+        item if item in available else defaults[index]
+        for index, item in enumerate(value)
+    ]
+
+
+def save_system_monitor_source_ids(source_ids: list[str]) -> None:
+    if len(source_ids) != 4 or not all(isinstance(item, str) for item in source_ids):
+        raise RuntimeError("System Monitor requires four sensor assignments")
+    payload = read_config_payload()
+    if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
+        payload["version"] = 1
+        payload["channels"] = normalise_channels(
+            [dict(channel) for channel in DEFAULT_CHANNELS]
+        )
+    payload["system_monitor_sources"] = source_ids
+    write_config_payload(payload)
+
+
 def load_notepad_text() -> str:
     value = read_config_payload().get("notepad_text", "")
     if not isinstance(value, str):
@@ -553,23 +734,39 @@ def save_meter_style(style: str) -> None:
     write_config_payload(payload)
 
 
-def load_show_channel_icons() -> bool:
-    value = read_config_payload().get(
-        "show_channel_icons", DEFAULT_SHOW_CHANNEL_ICONS
-    )
-    return value if isinstance(value, bool) else DEFAULT_SHOW_CHANNEL_ICONS
+def load_badge_style() -> str:
+    value = read_config_payload().get("badge_style", DEFAULT_BADGE_STYLE)
+    return value if value in BADGE_STYLES else DEFAULT_BADGE_STYLE
 
 
-def save_show_channel_icons(value: object) -> None:
-    if not isinstance(value, bool):
-        raise RuntimeError("Channel icon visibility must be on or off")
+def save_badge_style(style: str) -> None:
+    if style not in BADGE_STYLES:
+        raise RuntimeError("Unsupported badge style")
     payload = read_config_payload()
     if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
         payload["version"] = 1
         payload["channels"] = normalise_channels(
             [dict(channel) for channel in DEFAULT_CHANNELS]
         )
-    payload["show_channel_icons"] = value
+    payload["badge_style"] = style
+    write_config_payload(payload)
+
+
+def load_show_controller_preview() -> bool:
+    value = read_config_payload().get("show_controller_preview", True)
+    return value if isinstance(value, bool) else True
+
+
+def save_show_controller_preview(value: object) -> None:
+    if not isinstance(value, bool):
+        raise RuntimeError("Controller preview visibility must be on or off")
+    payload = read_config_payload()
+    if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
+        payload["version"] = 1
+        payload["channels"] = normalise_channels(
+            [dict(channel) for channel in DEFAULT_CHANNELS]
+        )
+    payload["show_controller_preview"] = value
     write_config_payload(payload)
 
 
@@ -1081,6 +1278,11 @@ def service_action(action: str) -> None:
         raise RuntimeError(result.stderr.strip() or f"Could not {action} the mixer")
 
 
+def ensure_tray_indicator_running() -> None:
+    """Start the separately hosted GTK 3 indicator without blocking the GTK 4 UI."""
+    command(["systemctl", "--user", "enable", "--now", TRAY_SERVICE_NAME])
+
+
 def device_connected() -> bool:
     root = Path("/sys/bus/usb/devices")
     try:
@@ -1099,12 +1301,13 @@ def device_connected() -> bool:
     return False
 
 
-def make_window_class(Gtk, GLib, Gdk):
+def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
     class ControlWindow(Gtk.ApplicationWindow):
         def __init__(self, application):
             super().__init__(application=application)
             self.set_title(APP_NAME)
-            self.set_default_size(720, 650)
+            self.set_default_size(900, 1000)
+            self.set_size_request(900, 1000)
             self.set_resizable(True)
             self.pages = load_mixer_pages()
             self.current_page_index = 0
@@ -1113,12 +1316,18 @@ def make_window_class(Gtk, GLib, Gdk):
             self.dropdowns: list[Any] = []
             self.colour_buttons: list[Any] = []
             self.display_mode = load_display_mode()
+            self.system_monitor_sources = discover_system_monitor_sources()
+            self.system_monitor_source_ids = load_system_monitor_source_ids(
+                self.system_monitor_sources
+            )
+            self.system_monitor_source_dropdowns: list[Any] = []
             self.notepad_text = load_notepad_text()
             self.notepad_style = load_notepad_style()
             self.show_volume_meters = load_show_volume_meters()
             self.meter_channel_mode = load_meter_channel_mode()
             self.meter_style = load_meter_style()
-            self.show_channel_icons = load_show_channel_icons()
+            self.badge_style = load_badge_style()
+            self.show_controller_preview = load_show_controller_preview()
             self.remote_enabled = load_remote_enabled()
             self.remote_device_signature: tuple[tuple[str, str, int], ...] | None = None
             self.remote_pairing_dialog = None
@@ -1155,23 +1364,25 @@ def make_window_class(Gtk, GLib, Gdk):
             self.calibration_output = ""
             self.calibration_was_running = False
             self.calibration_cancelled = False
+            self.update_check_in_progress = False
+            self.available_update: dict[str, str] | None = None
+            self.display_preview_renderer = DisplayPreview()
+            self.display_preview_signature: object = None
+            self.display_preview_texture = None
 
-            root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-            root.set_margin_top(24)
-            root.set_margin_bottom(24)
-            root.set_margin_start(28)
-            root.set_margin_end(28)
-            scroller = Gtk.ScrolledWindow()
-            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scroller.set_child(root)
-            self.set_child(scroller)
+            root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            root.set_margin_top(18)
+            root.set_margin_bottom(18)
+            root.set_margin_start(22)
+            root.set_margin_end(22)
+            self.set_child(root)
 
             title = Gtk.Label(label=APP_NAME)
             title.set_xalign(0)
             title.add_css_class("title-1")
             root.append(title)
             subtitle = Gtk.Label(
-                label="Choose which PipeWire application each physical control manages."
+                label="Configure the mixer, controller display, and Android app."
             )
             subtitle.set_xalign(0)
             subtitle.set_wrap(True)
@@ -1188,6 +1399,92 @@ def make_window_class(Gtk, GLib, Gdk):
             self.service_status = Gtk.Label(label="Checking mixer…")
             self.service_status.set_xalign(1)
             status_box.append(self.service_status)
+
+            tabs = Gtk.Notebook()
+            tabs.set_hexpand(True)
+            tabs.set_vexpand(True)
+            root.append(tabs)
+
+            def add_tab(label: str):
+                page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+                page.set_margin_top(18)
+                page.set_margin_bottom(18)
+                page.set_margin_start(12)
+                page.set_margin_end(12)
+                page_scroller = Gtk.ScrolledWindow()
+                page_scroller.set_policy(
+                    Gtk.PolicyType.NEVER,
+                    Gtk.PolicyType.AUTOMATIC,
+                )
+                page_scroller.set_child(page)
+                tabs.append_page(page_scroller, Gtk.Label(label=label))
+                return page
+
+            mixer_tab = add_tab("Mixer")
+            buttons_tab = add_tab("Buttons")
+            display_tab = add_tab("Display")
+            android_tab = add_tab("Android app")
+
+            preview_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=6
+            )
+            preview_box.set_vexpand(False)
+            preview_box.set_valign(Gtk.Align.START)
+            preview_header = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=10
+            )
+            preview_title = Gtk.Label(label="Controller preview")
+            preview_title.set_xalign(0)
+            preview_title.set_hexpand(True)
+            preview_title.add_css_class("heading")
+            preview_header.append(preview_title)
+            preview_toggle_label = Gtk.Label(label="Show preview")
+            preview_toggle_label.set_xalign(1)
+            preview_header.append(preview_toggle_label)
+            self.preview_visibility_switch = Gtk.Switch()
+            self.preview_visibility_switch.set_valign(Gtk.Align.CENTER)
+            self.preview_visibility_switch.set_active(
+                self.show_controller_preview
+            )
+            preview_header.append(self.preview_visibility_switch)
+            preview_box.append(preview_header)
+            self.preview_content = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=6
+            )
+            self.preview_content.set_visible(self.show_controller_preview)
+            preview_frame = Gtk.Frame()
+            preview_frame.add_css_class("display-preview-frame")
+            preview_frame.set_halign(Gtk.Align.CENTER)
+            preview_frame.set_valign(Gtk.Align.START)
+            preview_frame.set_hexpand(False)
+            preview_frame.set_vexpand(False)
+            self.display_preview_picture = Gtk.Picture()
+            self.display_preview_picture.set_size_request(480, 272)
+            self.display_preview_picture.set_halign(Gtk.Align.CENTER)
+            self.display_preview_picture.set_valign(Gtk.Align.START)
+            self.display_preview_picture.set_hexpand(False)
+            self.display_preview_picture.set_vexpand(False)
+            self.display_preview_picture.set_can_shrink(False)
+            self.display_preview_picture.set_content_fit(Gtk.ContentFit.FILL)
+            preview_canvas = Gtk.Fixed()
+            preview_canvas.set_size_request(480, 272)
+            preview_canvas.set_halign(Gtk.Align.CENTER)
+            preview_canvas.set_valign(Gtk.Align.START)
+            preview_canvas.set_hexpand(False)
+            preview_canvas.set_vexpand(False)
+            preview_canvas.put(self.display_preview_picture, 0, 0)
+            preview_frame.set_child(preview_canvas)
+            self.preview_content.append(preview_frame)
+            self.display_preview_status = Gtk.Label(
+                label="Previewing unsaved display settings"
+            )
+            self.display_preview_status.set_xalign(0)
+            self.display_preview_status.add_css_class("dim-label")
+            self.preview_content.append(self.display_preview_status)
+            preview_box.append(self.preview_content)
+            self.preview_visibility_switch.connect(
+                "notify::active", self.on_preview_visibility_changed
+            )
 
             pages_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             pages_title = Gtk.Label(label="Mixer pages")
@@ -1222,7 +1519,7 @@ def make_window_class(Gtk, GLib, Gdk):
             pages_hint.set_wrap(True)
             pages_hint.add_css_class("dim-label")
             pages_box.append(pages_hint)
-            root.append(pages_box)
+            mixer_tab.append(pages_box)
             self.page_dropdown.connect(
                 "notify::selected", self.on_page_changed
             )
@@ -1231,11 +1528,11 @@ def make_window_class(Gtk, GLib, Gdk):
             channels_title = Gtk.Label(label="Control assignments")
             channels_title.set_xalign(0)
             channels_title.add_css_class("heading")
-            root.append(channels_title)
+            mixer_tab.append(channels_title)
 
             grid = Gtk.Grid(column_spacing=16, row_spacing=12)
             grid.set_column_homogeneous(False)
-            root.append(grid)
+            mixer_tab.append(grid)
             application_heading = Gtk.Label(label="Application")
             application_heading.set_xalign(0)
             application_heading.add_css_class("dim-label")
@@ -1282,7 +1579,7 @@ def make_window_class(Gtk, GLib, Gdk):
             refresh = Gtk.Button(label="Refresh applications")
             refresh.connect("clicked", self.on_refresh_clicked)
             hint_row.append(refresh)
-            root.append(hint_row)
+            mixer_tab.append(hint_row)
 
             sensitivity_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=6
@@ -1320,7 +1617,7 @@ def make_window_class(Gtk, GLib, Gdk):
             sensitivity_hint.set_wrap(True)
             sensitivity_hint.add_css_class("dim-label")
             sensitivity_box.append(sensitivity_hint)
-            root.append(sensitivity_box)
+            mixer_tab.append(sensitivity_box)
 
             calibration_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=6
@@ -1360,7 +1657,7 @@ def make_window_class(Gtk, GLib, Gdk):
             calibration_hint.set_wrap(True)
             calibration_hint.add_css_class("dim-label")
             calibration_box.append(calibration_hint)
-            root.append(calibration_box)
+            mixer_tab.append(calibration_box)
 
             buttons_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=8
@@ -1438,7 +1735,7 @@ def make_window_class(Gtk, GLib, Gdk):
             buttons_hint.set_wrap(True)
             buttons_hint.add_css_class("dim-label")
             buttons_box.append(buttons_hint)
-            root.append(buttons_box)
+            buttons_tab.append(buttons_box)
 
             screen_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             screen_title = Gtk.Label(label="Screen content")
@@ -1450,7 +1747,9 @@ def make_window_class(Gtk, GLib, Gdk):
             mode_label.set_xalign(0)
             mode_label.set_hexpand(True)
             mode_row.append(mode_label)
-            mode_model = Gtk.StringList.new(["Mixer", "Full-screen image", "Notepad"])
+            mode_model = Gtk.StringList.new(
+                ["Mixer", "Full-screen image", "Notepad", "System monitor"]
+            )
             self.display_mode_dropdown = Gtk.DropDown(model=mode_model)
             self.display_mode_dropdown.set_selected(DISPLAY_MODES.index(self.display_mode))
             self.display_mode_dropdown.connect(
@@ -1465,6 +1764,42 @@ def make_window_class(Gtk, GLib, Gdk):
             mode_hint.set_wrap(True)
             mode_hint.add_css_class("dim-label")
             screen_box.append(mode_hint)
+            self.mixer_display_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=6
+            )
+            screen_box.append(self.mixer_display_box)
+
+            badge_style_row = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=12
+            )
+            badge_style_text = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=4
+            )
+            badge_style_text.set_hexpand(True)
+            badge_style_title = Gtk.Label(label="Badge style")
+            badge_style_title.set_xalign(0)
+            badge_style_description = Gtk.Label(
+                label=(
+                    "OpenStream Style keeps the icon and percentage visible. "
+                    "Hercules Style uses a larger centred icon and briefly "
+                    "replaces it with a tear-free percentage when volume changes."
+                )
+            )
+            badge_style_description.set_xalign(0)
+            badge_style_description.set_wrap(True)
+            badge_style_description.add_css_class("dim-label")
+            badge_style_text.append(badge_style_title)
+            badge_style_text.append(badge_style_description)
+            badge_style_row.append(badge_style_text)
+            self.badge_style_combo = Gtk.ComboBoxText()
+            for style, label in BADGE_STYLE_CHOICES:
+                self.badge_style_combo.append(style, label)
+            self.badge_style_combo.set_active_id(self.badge_style)
+            self.badge_style_combo.set_valign(Gtk.Align.CENTER)
+            self.badge_style_combo.connect("changed", self.on_badge_style_changed)
+            badge_style_row.append(self.badge_style_combo)
+            self.mixer_display_box.append(badge_style_row)
+
             meter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             meter_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             meter_text.set_hexpand(True)
@@ -1490,7 +1825,7 @@ def make_window_class(Gtk, GLib, Gdk):
             )
             meter_row.append(self.volume_meter_switch)
             self.volume_meter_row = meter_row
-            screen_box.append(meter_row)
+            self.mixer_display_box.append(meter_row)
 
             meter_mode_row = Gtk.Box(
                 orientation=Gtk.Orientation.HORIZONTAL, spacing=12
@@ -1523,7 +1858,7 @@ def make_window_class(Gtk, GLib, Gdk):
             )
             meter_mode_row.append(self.meter_channel_mode_combo)
             self.meter_channel_mode_row = meter_mode_row
-            screen_box.append(meter_mode_row)
+            self.mixer_display_box.append(meter_mode_row)
 
             meter_style_row = Gtk.Box(
                 orientation=Gtk.Orientation.HORIZONTAL, spacing=12
@@ -1558,36 +1893,7 @@ def make_window_class(Gtk, GLib, Gdk):
             )
             meter_style_row.append(self.meter_style_combo)
             self.meter_style_row = meter_style_row
-            screen_box.append(meter_style_row)
-
-            # Channel icons toggle
-            icons_row = Gtk.Box(
-                orientation=Gtk.Orientation.HORIZONTAL, spacing=12
-            )
-            icons_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            icons_title = Gtk.Label(label="Show channel application icons")
-            icons_title.set_xalign(0)
-            icons_description = Gtk.Label(
-                label=(
-                    "Display a small icon badge at the top-right of each mixer "
-                    "column. Uses the system icon theme for applications, "
-                    "inputs, and outputs with a crisp built-in fallback."
-                )
-            )
-            icons_description.set_xalign(0)
-            icons_description.set_wrap(True)
-            icons_description.add_css_class("dim-label")
-            icons_text.append(icons_title)
-            icons_text.append(icons_description)
-            icons_row.append(icons_text)
-            self.channel_icons_switch = Gtk.Switch()
-            self.channel_icons_switch.set_valign(Gtk.Align.CENTER)
-            self.channel_icons_switch.set_active(self.show_channel_icons)
-            self.channel_icons_switch.connect(
-                "notify::active", self.on_channel_icons_visibility_changed
-            )
-            icons_row.append(self.channel_icons_switch)
-            screen_box.append(icons_row)
+            self.mixer_display_box.append(meter_style_row)
 
             # Button overlay style selector
             overlay_row = Gtk.Box(
@@ -1620,7 +1926,7 @@ def make_window_class(Gtk, GLib, Gdk):
                 "changed", self.on_button_overlay_style_changed
             )
             overlay_row.append(self.button_overlay_combo)
-            screen_box.append(overlay_row)
+            self.mixer_display_box.append(overlay_row)
 
             custom_overlay_row = Gtk.Box(
                 orientation=Gtk.Orientation.HORIZONTAL, spacing=8
@@ -1640,7 +1946,7 @@ def make_window_class(Gtk, GLib, Gdk):
                 "clicked", self.on_remove_custom_button_overlay
             )
             custom_overlay_row.append(self.remove_custom_overlay_button)
-            screen_box.append(custom_overlay_row)
+            self.mixer_display_box.append(custom_overlay_row)
             custom_overlay_hint = Gtk.Label(
                 label=(
                     "Design on the supplied 480×80 transparent PNG template, "
@@ -1650,7 +1956,7 @@ def make_window_class(Gtk, GLib, Gdk):
             custom_overlay_hint.set_xalign(0)
             custom_overlay_hint.set_wrap(True)
             custom_overlay_hint.add_css_class("dim-label")
-            screen_box.append(custom_overlay_hint)
+            self.mixer_display_box.append(custom_overlay_hint)
             self.update_custom_button_overlay_row()
 
             brightness_row = Gtk.Box(
@@ -1693,7 +1999,57 @@ def make_window_class(Gtk, GLib, Gdk):
             brightness_hint.set_wrap(True)
             brightness_hint.add_css_class("dim-label")
             screen_box.append(brightness_hint)
-            root.append(screen_box)
+            display_tab.append(screen_box)
+
+            self.system_monitor_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=6
+            )
+            system_monitor_title = Gtk.Label(label="System monitor")
+            system_monitor_title.set_xalign(0)
+            system_monitor_title.add_css_class("heading")
+            self.system_monitor_box.append(system_monitor_title)
+            system_monitor_description = Gtk.Label(
+                label=(
+                    "Assign any detected system source to each of the four live "
+                    "columns. CPU and GPU sources show utilisation on the left "
+                    "and temperature on the right (0–100 °C)."
+                )
+            )
+            system_monitor_description.set_xalign(0)
+            system_monitor_description.set_wrap(True)
+            self.system_monitor_box.append(system_monitor_description)
+            source_labels = [source["label"] for source in self.system_monitor_sources]
+            source_ids = [source["id"] for source in self.system_monitor_sources]
+            for index in range(4):
+                source_row = Gtk.Box(
+                    orientation=Gtk.Orientation.HORIZONTAL, spacing=12
+                )
+                source_label = Gtk.Label(label=f"Column {index + 1}")
+                source_label.set_xalign(0)
+                source_label.set_hexpand(True)
+                source_row.append(source_label)
+                dropdown = Gtk.DropDown(
+                    model=Gtk.StringList.new(source_labels)
+                )
+                selected_id = self.system_monitor_source_ids[index]
+                dropdown.set_selected(
+                    source_ids.index(selected_id) if selected_id in source_ids else 0
+                )
+                self.system_monitor_source_dropdowns.append(dropdown)
+                source_row.append(dropdown)
+                self.system_monitor_box.append(source_row)
+            system_monitor_hint = Gtk.Label(
+                label=(
+                    "GPU entries include their PCI address so multiple cards can "
+                    "be distinguished reliably across restarts. Select Apply "
+                    "changes to update the controller."
+                )
+            )
+            system_monitor_hint.set_xalign(0)
+            system_monitor_hint.set_wrap(True)
+            system_monitor_hint.add_css_class("dim-label")
+            self.system_monitor_box.append(system_monitor_hint)
+            display_tab.append(self.system_monitor_box)
 
             self.fullscreen_image_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=6
@@ -1725,7 +2081,7 @@ def make_window_class(Gtk, GLib, Gdk):
             fullscreen_hint.set_wrap(True)
             fullscreen_hint.add_css_class("dim-label")
             self.fullscreen_image_box.append(fullscreen_hint)
-            root.append(self.fullscreen_image_box)
+            display_tab.append(self.fullscreen_image_box)
 
             self.notepad_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=6
@@ -1856,7 +2212,7 @@ def make_window_class(Gtk, GLib, Gdk):
             self.notepad_status.add_css_class("dim-label")
             self.notepad_box.append(self.notepad_status)
             self.update_notepad_status()
-            root.append(self.notepad_box)
+            display_tab.append(self.notepad_box)
 
             self.background_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=6
@@ -1885,7 +2241,7 @@ def make_window_class(Gtk, GLib, Gdk):
             background_hint.set_wrap(True)
             background_hint.add_css_class("dim-label")
             self.background_box.append(background_hint)
-            root.append(self.background_box)
+            self.mixer_display_box.append(self.background_box)
             self.update_background_row()
             self.update_fullscreen_image_row()
             self.update_mode_controls()
@@ -1973,7 +2329,13 @@ def make_window_class(Gtk, GLib, Gdk):
             firewall_hint.set_wrap(True)
             firewall_hint.add_css_class("dim-label")
             remote_box.append(firewall_hint)
-            root.append(remote_box)
+            android_tab.append(remote_box)
+
+            footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            footer.set_vexpand(False)
+            footer.set_valign(Gtk.Align.START)
+            root.append(footer)
+            footer.append(preview_box)
 
             autostart_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             autostart_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -1993,17 +2355,32 @@ def make_window_class(Gtk, GLib, Gdk):
             self.autostart_switch.set_valign(Gtk.Align.CENTER)
             self.autostart_switch.connect("notify::active", self.on_autostart_changed)
             autostart_row.append(self.autostart_switch)
-            root.append(autostart_row)
+            footer.append(autostart_row)
+
+            self.update_banner = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=12
+            )
+            self.update_banner.add_css_class("update-card")
+            self.update_banner.set_visible(False)
+            self.update_banner_label = Gtk.Label(label="")
+            self.update_banner_label.set_xalign(0)
+            self.update_banner_label.set_hexpand(True)
+            self.update_banner_label.set_wrap(True)
+            self.update_banner.append(self.update_banner_label)
+            view_update_button = Gtk.Button(label="View release")
+            view_update_button.connect("clicked", self.on_view_update)
+            self.update_banner.append(view_update_button)
+            footer.append(self.update_banner)
 
             self.message = Gtk.Label(label="")
             self.message.set_xalign(0)
             self.message.set_wrap(True)
             self.message.add_css_class("dim-label")
-            root.append(self.message)
+            footer.append(self.message)
 
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
             actions.set_halign(Gtk.Align.END)
-            root.append(actions)
+            footer.append(actions)
             virtual_mixer_button = Gtk.Button(label="Open virtual mixer")
             virtual_mixer_button.set_tooltip_text(
                 "Open a mouse-controlled mixer for the saved pages"
@@ -2018,10 +2395,21 @@ def make_window_class(Gtk, GLib, Gdk):
             apply_button.connect("clicked", self.on_apply_clicked)
             actions.append(apply_button)
 
+            version_row = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=10
+            )
             version = Gtk.Label(label=f"{APP_NAME} {APP_VERSION}")
-            version.set_xalign(1)
+            version.set_xalign(0)
+            version.set_hexpand(True)
             version.add_css_class("dim-label")
-            root.append(version)
+            version_row.append(version)
+            self.update_check_status = Gtk.Label(label="")
+            self.update_check_status.add_css_class("dim-label")
+            version_row.append(self.update_check_status)
+            self.check_updates_button = Gtk.Button(label="Check for updates")
+            self.check_updates_button.connect("clicked", self.on_check_for_updates)
+            version_row.append(self.check_updates_button)
+            footer.append(version_row)
 
             try:
                 ensure_service_unit()
@@ -2029,13 +2417,233 @@ def make_window_class(Gtk, GLib, Gdk):
                 self.show_message(str(error), error=True)
             self.refresh_applications()
             self.refresh_status()
+            self.refresh_display_preview_if_changed()
+            GLib.idle_add(self.release_initial_window_size_request)
+            GLib.timeout_add(350, self.refresh_display_preview_if_changed)
             GLib.timeout_add_seconds(2, self.refresh_status)
+            GLib.idle_add(self.check_for_updates_if_due)
+            GLib.timeout_add_seconds(
+                UPDATE_CHECK_INTERVAL_SECONDS,
+                self.periodic_update_check,
+            )
 
         def show_message(self, text: str, error: bool = False) -> None:
             self.message.set_text(text)
             self.message.remove_css_class("success")
             self.message.remove_css_class("error")
             self.message.add_css_class("error" if error else "success")
+
+        def release_initial_window_size_request(self) -> bool:
+            self.set_size_request(-1, -1)
+            return False
+
+        def current_preview_state(self) -> tuple[object, dict[str, Any]]:
+            try:
+                channels = self.selected_channels()
+            except (IndexError, RuntimeError):
+                channels = [dict(channel) for channel in self.saved_channels]
+            try:
+                button_actions = self.selected_button_actions()
+                button_presets = self.selected_button_volume_presets()
+            except (IndexError, RuntimeError):
+                button_actions = list(self.saved_button_actions)
+                button_presets = [dict(value) for value in self.saved_button_volume_presets]
+            meter_style = self.meter_style_combo.get_active_id() or self.meter_style
+            button_overlay_style = (
+                self.button_overlay_combo.get_active_id()
+                or self.button_overlay_style
+            )
+            badge_style = (
+                self.badge_style_combo.get_active_id() or self.badge_style
+            )
+            background_signature = preview_file_signature(self.background_path)
+            fullscreen_signature = preview_file_signature(
+                self.fullscreen_image_path
+            )
+            custom_overlay_signature = preview_file_signature(
+                self.custom_button_overlay_path
+            )
+            system_sources = self.selected_system_monitor_source_ids()
+            notepad_style = self.selected_notepad_style()
+            state: dict[str, Any] = {
+                "mode": self.display_mode,
+                "channels": channels,
+                "background_image": self.background_path,
+                "fullscreen_image": self.fullscreen_image_path,
+                "notepad_text": self.notepad_text,
+                "notepad_style": notepad_style,
+                "show_volume_meters": self.volume_meter_switch.get_active(),
+                "meter_style": meter_style,
+                "badge_style": badge_style,
+                "system_source_ids": system_sources,
+                "button_actions": button_actions,
+                "button_volume_presets": button_presets,
+                # Controller brightness is applied by the physical display. Keep
+                # the GUI preview at full brightness so its colours remain an
+                # accurate, useful representation of the rendered frame.
+                "display_brightness": MAX_DISPLAY_BRIGHTNESS,
+            }
+            signature = (
+                self.display_mode,
+                tuple(
+                    (item.get("kind"), item.get("label"), item.get("color"))
+                    for item in channels
+                ),
+                background_signature,
+                fullscreen_signature,
+                self.notepad_text,
+                tuple(sorted(notepad_style.items())),
+                state["show_volume_meters"],
+                meter_style,
+                badge_style,
+                button_overlay_style,
+                custom_overlay_signature,
+                tuple(system_sources),
+                tuple(button_actions),
+                tuple(
+                    (value.get("channel"), value.get("percentage"))
+                    for value in button_presets
+                ),
+                int(time.monotonic() // 2) if self.display_mode == "system" else 0,
+            )
+            return signature, state
+
+        def refresh_display_preview_if_changed(self) -> bool:
+            if not self.show_controller_preview:
+                return True
+            try:
+                signature, state = self.current_preview_state()
+                if signature == self.display_preview_signature:
+                    return True
+                image = self.display_preview_renderer.render(**state)
+                image_bytes = GLib.Bytes.new(image.tobytes())
+                pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+                    image_bytes,
+                    GdkPixbuf.Colorspace.RGB,
+                    False,
+                    8,
+                    image.width,
+                    image.height,
+                    image.width * 3,
+                )
+                self.display_preview_texture = Gdk.Texture.new_for_pixbuf(pixbuf)
+                self.display_preview_picture.set_paintable(
+                    self.display_preview_texture
+                )
+                self.display_preview_status.set_text(
+                    "Live preview of current unsaved settings"
+                )
+                self.display_preview_signature = signature
+            except (OSError, RuntimeError, ValueError, IndexError) as error:
+                self.display_preview_status.set_text(f"Preview unavailable: {error}")
+            return True
+
+        def show_available_update(self, release: object) -> bool:
+            available = newer_release(release)
+            self.available_update = available
+            if available is None:
+                self.update_banner.set_visible(False)
+                return False
+            self.update_banner_label.set_text(
+                f"OpenStream100 {available['version']} is available."
+            )
+            self.update_banner.set_visible(True)
+            return True
+
+        def check_for_updates_if_due(self) -> bool:
+            state = load_update_state()
+            self.show_available_update(state.get("release"))
+            if update_check_due(state):
+                self.start_update_check(manual=False)
+            return False
+
+        def periodic_update_check(self) -> bool:
+            if update_check_due(load_update_state()):
+                self.start_update_check(manual=False)
+            return True
+
+        def on_check_for_updates(self, _button) -> None:
+            self.start_update_check(manual=True)
+
+        def start_update_check(self, manual: bool) -> None:
+            if self.update_check_in_progress:
+                return
+            state = load_update_state()
+            etag = state.get("etag")
+            self.update_check_in_progress = True
+            self.check_updates_button.set_sensitive(False)
+            self.update_check_status.set_text("Checking…")
+            worker = threading.Thread(
+                target=self.update_check_worker,
+                args=(manual, etag if isinstance(etag, str) else ""),
+                daemon=True,
+                name="openstream100-update-check",
+            )
+            worker.start()
+
+        def update_check_worker(self, manual: bool, etag: str) -> None:
+            try:
+                release, response_etag, not_modified = fetch_latest_release(etag)
+                error = ""
+            except RuntimeError as caught:
+                release = None
+                response_etag = etag
+                not_modified = False
+                error = str(caught)
+            GLib.idle_add(
+                self.finish_update_check,
+                manual,
+                release,
+                response_etag,
+                not_modified,
+                error,
+            )
+
+        def finish_update_check(
+            self,
+            manual: bool,
+            release: dict[str, str] | None,
+            etag: str,
+            not_modified: bool,
+            error: str,
+        ) -> bool:
+            self.update_check_in_progress = False
+            self.check_updates_button.set_sensitive(True)
+            if error:
+                self.update_check_status.set_text("Check failed" if manual else "")
+                if manual:
+                    self.show_message(error, error=True)
+                return False
+
+            state = load_update_state()
+            selected_release = state.get("release") if not_modified else release
+            saved_state: dict[str, Any] = {
+                "last_checked": time.time(),
+                "etag": etag,
+            }
+            if isinstance(selected_release, dict):
+                saved_state["release"] = selected_release
+            try:
+                save_update_state(saved_state)
+            except OSError:
+                # A read-only state directory should not turn a successful
+                # release check into a user-facing failure.
+                pass
+
+            if self.show_available_update(selected_release):
+                self.update_check_status.set_text("Update available")
+            elif manual:
+                self.update_check_status.set_text("Up to date")
+            else:
+                self.update_check_status.set_text("")
+            return False
+
+        def on_view_update(self, _button) -> None:
+            release = self.available_update
+            if release is None:
+                return
+            if not webbrowser.open(release["url"]):
+                self.show_message("Could not open the GitHub release page.", error=True)
 
         def rebuild_remote_devices(self, devices: list[dict[str, Any]]) -> None:
             signature = tuple(
@@ -2301,14 +2909,10 @@ def make_window_class(Gtk, GLib, Gdk):
                 self.remove_custom_overlay_button.set_sensitive(True)
 
         def update_mode_controls(self) -> None:
-            self.background_box.set_sensitive(self.display_mode == "mixer")
-            self.fullscreen_image_box.set_sensitive(self.display_mode == "image")
-            self.notepad_box.set_sensitive(self.display_mode == "notepad")
-            self.volume_meter_row.set_sensitive(self.display_mode == "mixer")
-            self.meter_channel_mode_row.set_sensitive(
-                self.display_mode == "mixer"
-            )
-            self.meter_style_row.set_sensitive(self.display_mode == "mixer")
+            self.mixer_display_box.set_visible(self.display_mode == "mixer")
+            self.fullscreen_image_box.set_visible(self.display_mode == "image")
+            self.notepad_box.set_visible(self.display_mode == "notepad")
+            self.system_monitor_box.set_visible(self.display_mode == "system")
 
         def update_notepad_status(self) -> None:
             character_count = len(self.notepad_text)
@@ -2358,6 +2962,16 @@ def make_window_class(Gtk, GLib, Gdk):
                 }
             )
 
+        def selected_system_monitor_source_ids(self) -> list[str]:
+            source_ids = [source["id"] for source in self.system_monitor_sources]
+            result: list[str] = []
+            for dropdown in self.system_monitor_source_dropdowns:
+                selected = dropdown.get_selected()
+                result.append(
+                    source_ids[selected] if selected < len(source_ids) else source_ids[0]
+                )
+            return result
+
         def on_notepad_text_changed(self, text_buffer) -> None:
             start, end = text_buffer.get_bounds()
             self.notepad_text = text_buffer.get_text(start, end, True)
@@ -2377,9 +2991,18 @@ def make_window_class(Gtk, GLib, Gdk):
             except (OSError, RuntimeError) as error:
                 self.show_message(str(error), error=True)
 
-        def on_channel_icons_visibility_changed(self, _switch, _parameter) -> None:
-            active = _switch.get_active() if hasattr(_switch, "get_active") else False
-            save_show_channel_icons(active)
+        def on_badge_style_changed(self, _combo) -> None:
+            style = self.badge_style_combo.get_active_id()
+            if not style:
+                return
+            try:
+                save_badge_style(style)
+                self.badge_style = style
+                self.show_message(
+                    "Badge style selected. Select Apply changes to update the controller."
+                )
+            except (OSError, RuntimeError) as error:
+                self.show_message(str(error), error=True)
 
         def on_meter_channel_mode_changed(self, _combo) -> None:
             mode = self.meter_channel_mode_combo.get_active_id()
@@ -2423,6 +3046,8 @@ def make_window_class(Gtk, GLib, Gdk):
             try:
                 save_button_overlay_style(style)
                 self.button_overlay_style = style
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
                 self.show_message(
                     "Button overlay selected. Select Apply changes to update the controller."
                 )
@@ -2461,6 +3086,8 @@ def make_window_class(Gtk, GLib, Gdk):
                 self.button_overlay_style = "custom"
                 save_button_overlay_style(self.button_overlay_style)
                 self.button_overlay_combo.set_active_id(self.button_overlay_style)
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
                 self.show_message(
                     "Custom overlay imported and selected. Select Apply changes "
                     "to update the controller."
@@ -2516,6 +3143,8 @@ def make_window_class(Gtk, GLib, Gdk):
                         self.button_overlay_style
                     )
                 self.update_custom_button_overlay_row()
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
                 self.show_message(
                     "Custom overlay removed. Select Apply changes to update the controller."
                 )
@@ -2526,6 +3155,18 @@ def make_window_class(Gtk, GLib, Gdk):
 
         def on_volume_meter_visibility_changed(self, _switch, _parameter) -> None:
             self.update_mode_controls()
+
+        def on_preview_visibility_changed(self, switch, _parameter) -> None:
+            visible = bool(switch.get_active())
+            self.show_controller_preview = visible
+            self.preview_content.set_visible(visible)
+            if visible:
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
+            try:
+                save_show_controller_preview(visible)
+            except (OSError, RuntimeError) as error:
+                self.show_message(str(error), error=True)
 
         def on_brightness_changed(self, scale) -> None:
             brightness = normalise_display_brightness(scale.get_value())
@@ -2570,6 +3211,8 @@ def make_window_class(Gtk, GLib, Gdk):
                     raise RuntimeError("Choose an image stored on this computer.")
                 self.background_path = import_background(Path(filename))
                 self.update_background_row()
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
                 self.show_message(
                     "Background imported. Select Apply changes to update the controller."
                 )
@@ -2585,6 +3228,8 @@ def make_window_class(Gtk, GLib, Gdk):
                 BACKGROUND_PATH.unlink(missing_ok=True)
                 self.background_path = None
                 self.update_background_row()
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
                 self.show_message(
                     "Background removed. Select Apply changes to update the controller."
                 )
@@ -2620,6 +3265,8 @@ def make_window_class(Gtk, GLib, Gdk):
                     raise RuntimeError("Choose an image stored on this computer.")
                 self.fullscreen_image_path = import_fullscreen_image(Path(filename))
                 self.update_fullscreen_image_row()
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
                 self.show_message(
                     "Full-screen image imported. Select Apply changes to update the controller."
                 )
@@ -2635,6 +3282,8 @@ def make_window_class(Gtk, GLib, Gdk):
                 FULLSCREEN_IMAGE_PATH.unlink(missing_ok=True)
                 self.fullscreen_image_path = None
                 self.update_fullscreen_image_row()
+                self.display_preview_signature = None
+                self.refresh_display_preview_if_changed()
                 self.show_message(
                     "Full-screen image removed. Select Apply changes to update the controller."
                 )
@@ -2826,10 +3475,13 @@ def make_window_class(Gtk, GLib, Gdk):
             save_show_volume_meters(self.volume_meter_switch.get_active())
             save_meter_channel_mode(self.meter_channel_mode)
             save_meter_style(self.meter_style)
+            save_badge_style(self.badge_style)
             save_volume_meter_mode("activity")
             save_notepad_text(self.notepad_text)
             self.notepad_style = self.selected_notepad_style()
             save_notepad_style(self.notepad_style)
+            self.system_monitor_source_ids = self.selected_system_monitor_source_ids()
+            save_system_monitor_source_ids(self.system_monitor_source_ids)
             if service_property("ActiveState") == "active":
                 service_action("restart")
                 self.show_message("Changes saved and the mixer restarted.")
@@ -3129,8 +3781,10 @@ def main() -> int:
     try:
         import gi
 
+        gi.require_version("Gdk", "4.0")
         gi.require_version("Gtk", "4.0")
-        from gi.repository import Gdk, GLib, Gtk
+        gi.require_version("GdkPixbuf", "2.0")
+        from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
     except (ImportError, ValueError) as error:
         print(
             "The GTK desktop library is missing. On Fedora, run:\n"
@@ -3146,6 +3800,12 @@ def main() -> int:
         .status-card {
             background-color: rgba(48, 204, 190, 0.10);
             border: 1px solid rgba(48, 204, 190, 0.22);
+            border-radius: 12px;
+            padding: 14px;
+        }
+        .update-card {
+            background-color: rgba(91, 130, 246, 0.12);
+            border: 1px solid rgba(91, 130, 246, 0.30);
             border-radius: 12px;
             padding: 14px;
         }
@@ -3167,6 +3827,12 @@ def main() -> int:
             font-size: 18px;
             font-weight: 700;
         }
+        .display-preview-frame {
+            background-color: #090e14;
+            border: 1px solid rgba(82, 96, 116, 0.75);
+            border-radius: 10px;
+            padding: 5px;
+        }
         """
     )
     display = Gdk.Display.get_default()
@@ -3176,7 +3842,8 @@ def main() -> int:
         )
 
     application = Gtk.Application(application_id=APP_ID)
-    ControlWindow = make_window_class(Gtk, GLib, Gdk)
+    ensure_tray_indicator_running()
+    ControlWindow = make_window_class(Gtk, GLib, Gdk, GdkPixbuf)
 
     def activate(app) -> None:
         window = app.get_active_window()

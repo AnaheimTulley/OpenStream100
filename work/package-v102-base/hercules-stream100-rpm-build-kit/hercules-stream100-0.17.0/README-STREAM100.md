@@ -1,9 +1,10 @@
 # OpenStream100 for Fedora Linux
 
 OpenStream100 provides up to eight pages of four per-application PipeWire volume controls for the
-Hercules Stream 100, four soft-mute buttons, four programmable action buttons
+Hercules Stream 100, four press-to-mute knobs, four programmable action buttons
 with LEDs, saved channel assignments and colours, custom display images, and a
-live full-screen 480x272 display with Mixer, Full-screen image, and Notepad modes.
+live full-screen 480x272 display with Mixer, Full-screen image, Notepad, and
+System Monitor modes.
 
 Hercules is a trademark of Guillemot Corporation. This independent Linux
 project is not affiliated with or endorsed by Guillemot Corporation.
@@ -74,21 +75,27 @@ The installer copies the application into your personal applications folder,
 adds **OpenStream100** to Fedora's app launcher, and opens its control
 panel. It does not need administrator access. The control panel provides:
 
+- Mixer, Buttons, Display, and Android app tabs that keep related settings together
+- Display settings that adapt to the selected display mode
 - Four application assignment menus
 - Up to eight saved mixer pages with four controls and actions per page
 - A custom display colour for each control
 - Adjustable 0.5% to 4.0% knob sensitivity
 - Optional live meters with selectable Mono/Stereo monitoring and four visualiser styles
 - Four programmable buttons with automatic LED illumination
-- Mixer, Full-screen image, and editable Notepad display modes
+- Mixer, Full-screen image, editable Notepad, and live System Monitor display modes
+- Ayatana system-tray indicator with Open, Start/Stop, and Restart actions
+- Live 480×272 preview of unsaved display settings in the Display tab
 - Saved Notepad font size, family, style, text colour, and alignment controls
 - Separate imported images for the mixer background and full-screen artwork
 - Crisp theme icons for applications, outputs, inputs, and muted channels
+- OpenStream and Hercules badge layouts for the mixer screen
 - Built-in and user-designed button-label overlays with an exportable template
 - Controller and mixer status
 - A separate mouse-controlled virtual mixer window
 - Saved Android remote enablement with mDNS discovery, one-time PIN pairing,
   QR fallback, and individually revocable paired phones
+- Automatic daily and manual GitHub release checks with a **View release** link
 - **Start mixer** and **Stop mixer** buttons
 - An **Apply changes** button
 - Optional automatic startup when you sign in
@@ -111,6 +118,14 @@ fixed native object. Its surrounding pixels are sampled from the active mixer
 background so the carrier blends into plain panels and imported artwork. The
 object stays fully opaque because the firmware cannot reliably mix transparent
 and opaque runs in one live object.
+Under **Badge style**, **OpenStream Style (icon and percentage)** retains this
+layout. **Hercules Style (icon only)** places a larger 32x32 application icon in
+the centred badge position and normally shows no percentage. Turning a knob,
+using the Android remote, or applying a preset temporarily replaces that icon
+with a clean percentage badge using doubled 3x5 glyphs for 1.5 seconds. The
+original framebuffer icon returns untouched afterward. This transient value
+uses the controller's native object layer; the application name and full-screen
+framebuffer remain untouched, preventing the blur caused by a display relatch.
 At startup, OpenStream100 clears the mapped firmware panel and meter layers as
 soon as initialization permits, primes the controller with a black frame, then
 shows the packaged OpenStream100 logo before revealing the completed saved
@@ -133,7 +148,7 @@ Removing the custom overlay safely switches the selection back to Boxes.
 
 Under **Screen content**, choose **Full-screen image** to replace the mixer UI
 with separate edge-to-edge artwork. Select an image in the section that appears,
-then choose **Apply changes**. The four encoders and mute buttons continue to
+then choose **Apply changes**. Turning or pressing the four knobs continues to
 control their assigned audio, but mixer labels and percentage badges stay hidden
 so the artwork owns the entire display. Switch back to **Mixer** and apply the
 change to restore the live mixer screen. Image mode also disables the firmware's
@@ -149,6 +164,16 @@ long for the chosen size are shortened with an ellipsis. As in Full-screen image
 mode, mixer labels, meters, percentage badges, and action-zone dividers remain
 hidden while the four encoders, mute controls, programmable buttons, and LEDs
 continue working.
+
+Choose **System monitor** for four independently assignable live columns. The
+detected choices include CPU, each GPU by stable PCI address, memory, and mounted
+filesystems. CPU and GPU columns use the left bar for utilisation
+and the right bar for temperature on a 0–100 °C scale. GPU and temperature
+values fall back cleanly when the kernel or driver does not expose them. Metrics
+come from Linux procfs/sysfs, with optional `nvidia-smi` support, and refresh
+without continuously redrawing the framebuffer. The audio-only white volume
+markers are hidden; audio and programmable-button controls remain active.
+
 Existing channel and button settings remain in:
 
 ```text

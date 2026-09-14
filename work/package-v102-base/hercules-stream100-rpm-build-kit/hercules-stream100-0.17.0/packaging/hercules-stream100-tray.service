@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenStream100 system tray indicator
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/libexec/hercules-stream100/stream100-tray.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

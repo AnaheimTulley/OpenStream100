@@ -39,6 +39,8 @@ static void assert_notepad_metadata_mode(void) {
     unsigned char page_count;
     unsigned char meter_style;
     unsigned char volume_meters;
+    unsigned char badge_style;
+    unsigned char transient_volume_mask;
     unsigned char display_brightness;
 
     memcpy(metadata, "S1C3", 4);
@@ -47,8 +49,47 @@ static void assert_notepad_metadata_mode(void) {
         frame, levels, meter_left_levels, meter_right_levels,
         &muted_mask, &online_mask, &display_mode,
         channel_colors, button_leds, &page_index, &page_count,
-        &meter_style, &volume_meters, &display_brightness) == 1);
+        &meter_style, &volume_meters, &badge_style,
+        &transient_volume_mask,
+        &display_brightness) == 1);
     assert(display_mode == 5);
+    assert(badge_style == BADGE_STYLE_OPENSTREAM);
+
+    metadata[10] = 6;
+    metadata[30] = 3 | 0x04 | 0xa0;
+    assert(read_native_metadata(
+        frame, levels, meter_left_levels, meter_right_levels,
+        &muted_mask, &online_mask, &display_mode,
+        channel_colors, button_leds, &page_index, &page_count,
+        &meter_style, &volume_meters, &badge_style,
+        &transient_volume_mask,
+        &display_brightness) == 1);
+    assert(display_mode == 6);
+    assert(volume_meters == 3);
+    assert(badge_style == BADGE_STYLE_HERCULES);
+    assert(transient_volume_mask == 0x0a);
+}
+
+static void assert_clean_hercules_percentage(void) {
+    const unsigned int white = 0xf0000u | native_rgb565(255, 255, 255);
+    const unsigned int blue = 0xf0000u | percentage_background(
+        0, 0, 1, default_channel_colors);
+
+    /* 24% uses doubled pixels: every authored 3x5 cell occupies a stable
+     * 2x2 LCD block. The rest of the object is a solid badge, not a sampled
+     * approximation of the detailed framebuffer icon underneath. */
+    assert(percentage_badge_pixel(
+        0, 24, 0, 1, default_channel_colors, NULL, 1, 6, 11) == white);
+    assert(percentage_badge_pixel(
+        0, 24, 0, 1, default_channel_colors, NULL, 1, 7, 12) == white);
+    assert(percentage_badge_pixel(
+        0, 24, 0, 1, default_channel_colors, NULL, 1, 20, 11) == white);
+    assert(percentage_badge_pixel(
+        0, 24, 0, 1, default_channel_colors, NULL, 1, 24, 11) == white);
+    assert(percentage_badge_pixel(
+        0, 24, 0, 1, default_channel_colors, NULL, 1, 22, 11) == blue);
+    assert(percentage_badge_pixel(
+        0, 24, 0, 1, default_channel_colors, NULL, 1, 1, 1) == blue);
 }
 
 int main(void) {
@@ -68,7 +109,8 @@ int main(void) {
     }
 
     assert_notepad_metadata_mode();
+    assert_clean_hercules_percentage();
 
-    puts("native meter panel records and Notepad metadata: PASS");
+    puts("native meter panel records, Notepad, and System Monitor metadata: PASS");
     return 0;
 }

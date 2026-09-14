@@ -41,7 +41,7 @@ class DisplayState:
 
     def observe(self, frame: bytes) -> None:
         self.has_frame = True
-        if frame[METADATA_OFFSET : METADATA_OFFSET + 4] == b"S1C2":
+        if frame[METADATA_OFFSET : METADATA_OFFSET + 4] in {b"S1C2", b"S1C3"}:
             self.display_mode = frame[METADATA_OFFSET + 10]
         else:
             self.display_mode = 0xFF
