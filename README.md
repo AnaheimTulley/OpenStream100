@@ -100,7 +100,7 @@ automatically.
 | Desktop | A GTK4-capable Linux desktop with systemd user services |
 | Packaged Linux builds | Fedora 44 x86_64, Debian/Ubuntu amd64, and Arch Linux x86_64 |
 | Android remote | Android 8.0 (API 26) or later |
-| iOS remote | iOS 17 or later; build with Xcode 16 or newer |
+| iOS remote | iOS 17 or later; install from source with Xtool, or build with Xcode 16 or newer |
 | macOS port | macOS 14.2 or later and Xcode 16/Swift 6 (source build; early development) |
 | Network pairing | Linux computer and phone on the same trusted local network |
 
@@ -143,10 +143,23 @@ directly through GitHub rather than an app store.
 
 ### iOS
 
-Open [`ios/OpenStream100Remote/OpenStream100Remote.xcodeproj`](ios/OpenStream100Remote/OpenStream100Remote.xcodeproj)
+The iOS app is distributed as source. On Linux or macOS, install
+[Xtool](https://xtool.sh), connect an unlocked iPhone or iPad by USB, and run:
+
+```bash
+cd ios/OpenStream100Remote
+./install-ios.sh
+```
+
+This signs the app with your own Apple Account. Free Apple provisioning expires
+after seven days, so rerun the installer weekly. Full setup, Windows, Developer
+Mode, and trust instructions are in the
+[iOS README](ios/OpenStream100Remote/README.md).
+
+Alternatively, open
+[`ios/OpenStream100Remote/OpenStream100Remote.xcodeproj`](ios/OpenStream100Remote/OpenStream100Remote.xcodeproj)
 in Xcode, select your Apple development team, and run the app on an iPhone or
-iPad. The initial iOS port is distributed as source while App Store and signed
-release packaging are arranged.
+iPad.
 
 After installing or updating the Linux package, reconnect the Stream 100 if the
 new USB access rule has not taken effect. OpenStream100 must run as your normal
