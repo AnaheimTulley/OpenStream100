@@ -9,6 +9,17 @@ the hardware in front of you.
 [Download the latest release](https://github.com/AnaheimTulley/OpenStream100/releases/latest)
 · [Report a problem](https://github.com/AnaheimTulley/OpenStream100/issues)
 · [Android source](android/OpenStream100Remote)
+· [iOS source](ios/OpenStream100Remote)
+· [macOS source](macos/OpenStream100Mac)
+
+## macOS port (early development)
+
+A native SwiftUI macOS port now lives in [macos/OpenStream100Mac](macos/OpenStream100Mac).
+Its first milestone provides a four-channel Core Audio mixer, experimental
+per-application routing through macOS process taps, persistent configuration,
+controller discovery, and hardware encoder/knob input. The controller LCD is
+not yet supported on macOS.
+See the macOS README for the current scope and build instructions.
 
 ## What it can do
 
@@ -66,7 +77,7 @@ window. It provides faders, mute controls, activity meters, page navigation,
 programmable actions, and application icons, and it remains usable when the
 physical controller is disconnected.
 
-The companion **OpenStream100 Remote** Android app provides a landscape
+The companion **OpenStream100 Remote** Android and iOS apps provide a landscape
 four-channel mixer with smooth touch faders, live meters, mute controls, page
 navigation, programmable buttons, and assigned application icons.
 
@@ -89,6 +100,8 @@ automatically.
 | Desktop | A GTK4-capable Linux desktop with systemd user services |
 | Packaged Linux builds | Fedora 44 x86_64, Debian/Ubuntu amd64, and Arch Linux x86_64 |
 | Android remote | Android 8.0 (API 26) or later |
+| iOS remote | iOS 17 or later; build with Xcode 16 or newer |
+| macOS port | macOS 14.2 or later and Xcode 16/Swift 6 (source build; early development) |
 | Network pairing | Linux computer and phone on the same trusted local network |
 
 The Linux packages install the application, required runtime dependencies,
@@ -128,6 +141,13 @@ Download `openstream100remote.apk` on the phone and approve installation from
 the browser or file manager when Android asks. The APK is currently distributed
 directly through GitHub rather than an app store.
 
+### iOS
+
+Open [`ios/OpenStream100Remote/OpenStream100Remote.xcodeproj`](ios/OpenStream100Remote/OpenStream100Remote.xcodeproj)
+in Xcode, select your Apple development team, and run the app on an iPhone or
+iPad. The initial iOS port is distributed as source while App Store and signed
+release packaging are arranged.
+
 After installing or updating the Linux package, reconnect the Stream 100 if the
 new USB access rule has not taken effect. OpenStream100 must run as your normal
 desktop user—never with `sudo`.
@@ -156,11 +176,11 @@ control panel and select **Calibrate knob presses…**. The mixer pauses while y
 press and release the four knobs in order, then resumes automatically. Do not use
 the separate numbered programmable buttons during calibration.
 
-## Pairing the Android remote
+## Pairing a mobile remote
 
 1. Enable **Android remote control** in the Linux control panel and start the
    mixer.
-2. Open OpenStream100 Remote on the phone.
+2. Open OpenStream100 Remote on the Android or iOS device.
 3. Select the automatically discovered Linux computer.
 4. Enter the temporary six-digit PIN that appears in the desktop GUI.
 
@@ -260,6 +280,24 @@ Build the Android app with Java 17 and Android SDK 37:
 ```bash
 cd android/OpenStream100Remote
 ./gradlew lintDebug assembleDebug
+```
+
+Compile-check the native iOS app without code signing:
+
+```bash
+cd ios/OpenStream100Remote
+xcodebuild -project OpenStream100Remote.xcodeproj \
+  -scheme OpenStream100Remote \
+  -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+Build and test the native macOS app:
+
+```bash
+cd macos/OpenStream100Mac
+swift test
+./scripts/build-app.sh
 ```
 
 The package builds run the Python regression tests, virtual-mixer tests, remote
