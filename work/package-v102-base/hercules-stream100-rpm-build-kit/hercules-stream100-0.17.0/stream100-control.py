@@ -788,6 +788,24 @@ def save_remote_enabled(value: object) -> None:
     write_config_payload(payload)
 
 
+def load_lock_screen_protection() -> bool:
+    value = read_config_payload().get("lock_screen_protection", False)
+    return value if isinstance(value, bool) else False
+
+
+def save_lock_screen_protection(value: object) -> None:
+    if not isinstance(value, bool):
+        raise RuntimeError("Lock-screen protection must be on or off")
+    payload = read_config_payload()
+    if payload.get("version") != 1 or not isinstance(payload.get("channels"), list):
+        payload["version"] = 1
+        payload["channels"] = normalise_channels(
+            [dict(channel) for channel in DEFAULT_CHANNELS]
+        )
+    payload["lock_screen_protection"] = value
+    write_config_payload(payload)
+
+
 def remote_admin_request(path: str, method: str = "GET") -> dict[str, Any]:
     """Call one loopback-only endpoint exposed by the running mixer."""
     request = Request(
@@ -1329,6 +1347,7 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             self.badge_style = load_badge_style()
             self.show_controller_preview = load_show_controller_preview()
             self.remote_enabled = load_remote_enabled()
+            self.lock_screen_protection = load_lock_screen_protection()
             self.remote_device_signature: tuple[tuple[str, str, int], ...] | None = None
             self.remote_pairing_dialog = None
             self.last_remote_pairing_pin = ""
@@ -1999,6 +2018,35 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             brightness_hint.set_wrap(True)
             brightness_hint.add_css_class("dim-label")
             screen_box.append(brightness_hint)
+
+            lock_row = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=12
+            )
+            lock_text = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=2
+            )
+            lock_text.set_hexpand(True)
+            lock_title = Gtk.Label(label="Protect controls while PC is locked")
+            lock_title.set_xalign(0)
+            lock_description = Gtk.Label(
+                label=(
+                    "Turn off the controller screen and ignore hardware and "
+                    "remote-control changes until this session is unlocked."
+                )
+            )
+            lock_description.set_xalign(0)
+            lock_description.set_wrap(True)
+            lock_description.add_css_class("dim-label")
+            lock_text.append(lock_title)
+            lock_text.append(lock_description)
+            lock_row.append(lock_text)
+            self.lock_screen_protection_switch = Gtk.Switch()
+            self.lock_screen_protection_switch.set_valign(Gtk.Align.CENTER)
+            self.lock_screen_protection_switch.set_active(
+                self.lock_screen_protection
+            )
+            lock_row.append(self.lock_screen_protection_switch)
+            screen_box.append(lock_row)
             display_tab.append(screen_box)
 
             self.system_monitor_box = Gtk.Box(
@@ -3476,6 +3524,10 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             save_meter_channel_mode(self.meter_channel_mode)
             save_meter_style(self.meter_style)
             save_badge_style(self.badge_style)
+            self.lock_screen_protection = (
+                self.lock_screen_protection_switch.get_active()
+            )
+            save_lock_screen_protection(self.lock_screen_protection)
             save_volume_meter_mode("activity")
             save_notepad_text(self.notepad_text)
             self.notepad_style = self.selected_notepad_style()

@@ -1627,7 +1627,9 @@ static int read_native_metadata(const unsigned char *frame,
         *display_brightness = encoded_brightness == 0
             ? DEFAULT_DISPLAY_BRIGHTNESS
             : (unsigned char)(encoded_brightness - 1u);
-        if (*display_brightness < 10 || *display_brightness > 100) {
+        /* Zero is reserved for lock-screen protection. User-selectable
+         * brightness remains limited to 10..100 percent in the control panel. */
+        if (*display_brightness > 100) {
             *display_brightness = DEFAULT_DISPLAY_BRIGHTNESS;
         }
         const unsigned char encoded_page_count = metadata[29] & 0x0fu;

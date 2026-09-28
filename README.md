@@ -36,6 +36,9 @@ See the macOS README for the current scope and build instructions.
   replace app names only while volume changes.
 - Adjust encoder sensitivity and screen brightness, with settings retained
   between sessions.
+- Optionally turn off the controller screen and ignore hardware and remote
+  control changes while the Linux desktop session is locked, then restore the
+  current display and controls after unlock.
 
 ### Programmable buttons
 
@@ -117,19 +120,19 @@ The release includes `SHA256SUMS` for verifying downloaded files.
 ### Fedora
 
 ```bash
-sudo dnf install ./hercules-stream100-0.18.1-1.fc44.x86_64.rpm
+sudo dnf install ./hercules-stream100-0.18.2-1.fc44.x86_64.rpm
 ```
 
 ### Debian or Ubuntu
 
 ```bash
-sudo apt install ./hercules-stream100_0.18.1-1_amd64.deb
+sudo apt install ./hercules-stream100_0.18.2-1_amd64.deb
 ```
 
 ### Arch Linux and derivatives
 
 ```bash
-sudo pacman -U ./hercules-stream100-0.18.1-1-x86_64.pkg.tar.zst
+sudo pacman -U ./hercules-stream100-0.18.2-1-x86_64.pkg.tar.zst
 ```
 
 The maintained `PKGBUILD` and its build instructions are available in

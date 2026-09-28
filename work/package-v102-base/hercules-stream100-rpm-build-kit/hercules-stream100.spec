@@ -1,5 +1,5 @@
 Name:           hercules-stream100
-Version:        0.18.1
+Version:        0.18.2
 Release:        1%{?dist}
 Summary:        OpenStream100 PipeWire controller for Hercules Stream 100 hardware
 
@@ -142,6 +142,7 @@ python3 -m py_compile \
      stream100-test-updates.py \
      stream100-test-system-monitor.py \
      stream100-test-badge-styles.py \
+     stream100-test-lock-screen.py \
      stream100_channel_icons.py \
      stream100_system_monitor.py \
      stream100_version.py
@@ -151,6 +152,7 @@ python3 stream100-test-remote.py
 python3 stream100-test-updates.py
 python3 stream100-test-system-monitor.py
 python3 stream100-test-badge-styles.py
+python3 stream100-test-lock-screen.py
 desktop-file-validate \
      %{buildroot}%{_datadir}/applications/com.hercules.Stream100.desktop
 appstream-util validate-relax --nonet \
@@ -206,6 +208,12 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_mandir}/man1/hercules-stream100.1*
 
 %changelog
+* Mon Sep 28 2026 OpenStream100 contributors - 0.18.2-1
+- Add optional systemd-logind lock-screen protection
+- Turn the controller backlight fully off while the desktop is locked
+- Reject hardware and authenticated remote-control changes until unlock
+- Restore the current display and saved brightness without replaying locked input
+
 * Mon Sep 14 2026 OpenStream100 contributors - 0.18.1-1
 - Add an Ayatana AppIndicator tray icon with mixer controls
 - Add a live controller-screen preview for unsaved display settings

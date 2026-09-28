@@ -3,7 +3,7 @@ set -euo pipefail
 
 kit_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$kit_dir/hercules-stream100-0.17.0"
-source_archive="$kit_dir/hercules-stream100-0.18.1.tar.gz"
+source_archive="$kit_dir/hercules-stream100-0.18.2.tar.gz"
 spec_file="$kit_dir/hercules-stream100.spec"
 output_dir="$kit_dir/dist"
 install_after_build=0
@@ -28,6 +28,7 @@ for required in \
     "$source_dir/stream100-test-updates.py" \
     "$source_dir/stream100-test-system-monitor.py" \
     "$source_dir/stream100-test-badge-styles.py" \
+    "$source_dir/stream100-test-lock-screen.py" \
     "$source_dir/stream100_system_monitor.py" \
     "$source_dir/packaging/hercules-stream100-tray.service" \
     "$spec_file"; do
@@ -43,7 +44,7 @@ tar \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
     --exclude='stream100-test-native-meters' \
-    --transform='s,^hercules-stream100-0.17.0,hercules-stream100-0.18.1,' \
+    --transform='s,^hercules-stream100-0.17.0,hercules-stream100-0.18.2,' \
     --create \
     --gzip \
     --file="$archive_staging" \
@@ -92,7 +93,7 @@ find "$topdir/RPMS" "$topdir/SRPMS" -type f -name '*.rpm' \
 
 mapfile -t installable_rpms < <(
     find "$output_dir" -maxdepth 1 -type f \
-        -name 'hercules-stream100-0.18.1-1*.rpm' \
+        -name 'hercules-stream100-0.18.2-1*.rpm' \
         ! -name '*.src.rpm' \
         ! -name '*-debuginfo-*' \
         ! -name '*-debugsource-*'

@@ -267,6 +267,7 @@ def test_phone_snapshot_contract() -> None:
         icon_paths=["/api/v1/icons/0/0.png?v=abc", None, None, None],
     )
     assert snapshot["connected"] is True
+    assert snapshot["locked"] is False
     assert snapshot["channels"][0]["available"] is True
     assert snapshot["channels"][0]["level"] == 0.625
     assert snapshot["channels"][0]["meter_right"] == 0.5

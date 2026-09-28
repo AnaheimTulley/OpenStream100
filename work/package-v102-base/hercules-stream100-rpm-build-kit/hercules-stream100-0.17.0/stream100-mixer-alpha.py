@@ -62,6 +62,7 @@ MIN_DISPLAY_BRIGHTNESS = 10
 MAX_DISPLAY_BRIGHTNESS = 100
 DISPLAY_BRIGHTNESS_STEP = 5
 BRIGHTNESS_REFRESH_SECONDS = 0.15
+SESSION_LOCK_POLL_SECONDS = 0.25
 BASE_COUNTS_PER_PERCENT = 12.0
 MAX_MIXER_PAGES = 8
 VOLUME_METER_MODES = ("activity", "volume")
@@ -607,6 +608,102 @@ def parse_args() -> argparse.Namespace:
 
 def command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(arguments, check=False, capture_output=True, text=True)
+
+
+def query_session_locked(session_id: str | None = None) -> bool | None:
+    """Return logind's lock state for this user's graphical session.
+
+    ``auto`` lets loginctl find the caller's graphical session when a systemd
+    user service does not inherit XDG_SESSION_ID.  An unavailable or older
+    logind returns ``None`` so lock protection does not strand the controls in
+    a permanently disabled state.
+    """
+    candidates = []
+    selected = session_id or os.environ.get("XDG_SESSION_ID")
+    if selected:
+        candidates.append(selected)
+    if "auto" not in candidates:
+        candidates.append("auto")
+
+    for candidate in candidates:
+        try:
+            result = subprocess.run(
+                [
+                    "loginctl",
+                    "show-session",
+                    candidate,
+                    "--property=LockedHint",
+                    "--value",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            continue
+        value = result.stdout.strip().casefold()
+        if value in {"yes", "true", "1"}:
+            return True
+        if value in {"no", "false", "0"}:
+            return False
+    return None
+
+
+class SessionLockMonitor:
+    """Poll logind off the USB hot path and expose the latest lock state."""
+
+    def __init__(
+        self,
+        enabled: bool,
+        poll_seconds: float = SESSION_LOCK_POLL_SECONDS,
+    ) -> None:
+        self.enabled = enabled
+        self.poll_seconds = poll_seconds
+        self._locked = False
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._reported_unavailable = False
+        if not enabled:
+            return
+        self._refresh()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="openstream100-session-lock",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _refresh(self) -> None:
+        state = query_session_locked()
+        if state is None:
+            self._locked = False
+            if not self._reported_unavailable:
+                print(
+                    "Lock-screen protection could not read logind's LockedHint; "
+                    "controls will remain available.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self._reported_unavailable = True
+            return
+        self._locked = state
+        self._reported_unavailable = False
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.poll_seconds):
+            self._refresh()
+
+    @property
+    def locked(self) -> bool:
+        return self.enabled and self._locked
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
 
 
 UI_COLORS: list[tuple[int, int, int]] = [
@@ -2118,8 +2215,8 @@ def native_display_metadata(
         for index in range(4)
         if preview_levels is not None or bool(targets[index])
     )
-    if not MIN_DISPLAY_BRIGHTNESS <= display_brightness <= MAX_DISPLAY_BRIGHTNESS:
-        raise RuntimeError("display brightness must be between 10 and 100 percent")
+    if not 0 <= display_brightness <= MAX_DISPLAY_BRIGHTNESS:
+        raise RuntimeError("display brightness must be between 0 and 100 percent")
     # Preserve the established 32-byte metadata block by placing brightness+1
     # in the otherwise unused high nibbles of the online-mask and page-count
     # bytes. An encoded zero therefore means an older frame and defaults to
@@ -2245,6 +2342,26 @@ def update_native_display_metadata(
             transient_volume_mask=transient_volume_mask,
         )
     )
+    return bytes(result)
+
+
+def update_display_brightness(base_frame: bytes, brightness: int) -> bytes:
+    """Change only the hardware backlight request in an existing native frame."""
+    if len(base_frame) != DISPLAY_MESSAGE_BYTES:
+        raise RuntimeError("cached display frame has an invalid size")
+    if not 0 <= brightness <= MAX_DISPLAY_BRIGHTNESS:
+        raise RuntimeError("display brightness must be between 0 and 100 percent")
+    metadata_offset = DISPLAY_PALETTE_BYTES - 32
+    if base_frame[metadata_offset : metadata_offset + 4] not in NATIVE_METADATA_MAGICS:
+        raise RuntimeError("cached display frame has invalid OpenStream100 metadata")
+    encoded_brightness = brightness + 1
+    result = bytearray(base_frame)
+    result[metadata_offset + 9] = (
+        result[metadata_offset + 9] & 0x0F
+    ) | ((encoded_brightness & 0x0F) << 4)
+    result[metadata_offset + 29] = (
+        result[metadata_offset + 29] & 0x0F
+    ) | (encoded_brightness & 0xF0)
     return bytes(result)
 
 
@@ -3196,6 +3313,20 @@ def load_remote_enabled(path: Path) -> bool:
     return value if isinstance(value, bool) else False
 
 
+def load_lock_screen_protection(path: Path) -> bool:
+    """Read whether controls and the LCD should be disabled while locked."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
+    value = (
+        payload.get("lock_screen_protection", False)
+        if isinstance(payload, dict)
+        else False
+    )
+    return value if isinstance(value, bool) else False
+
+
 def load_volume_meter_mode(path: Path) -> str:
     try:
         payload = json.loads(path.read_text())
@@ -3795,6 +3926,7 @@ def build_remote_snapshot(
     meter_levels: list[StereoLevel],
     last_command: dict[str, Any] | None = None,
     icon_paths: list[str | None] | None = None,
+    session_locked: bool = False,
 ) -> dict[str, Any]:
     """Build the transport-neutral state consumed by phone mixer clients."""
     page = pages[current_page]
@@ -3832,6 +3964,7 @@ def build_remote_snapshot(
 
     snapshot: dict[str, Any] = {
         "connected": True,
+        "locked": session_locked,
         "page": current_page,
         "page_count": len(pages),
         "pages": [
@@ -3851,6 +3984,7 @@ def run_mixer(
     counts_per_percent: float,
     config_path: Path,
     display_brightness: int,
+    lock_screen_protection: bool,
     inverted: set[int],
     button_masks: dict[int, int],
     display_helper: Path | None,
@@ -3905,6 +4039,8 @@ def run_mixer(
     level_monitor: PipeWireLevelMonitor | None = None
     remote_bridge: RemoteBridge | None = None
     remote_server: RemoteServer | None = None
+    lock_monitor = SessionLockMonitor(lock_screen_protection)
+    session_locked = lock_monitor.locked
     try:
         endpoint = find_input_endpoint(device)
         if endpoint is None:
@@ -3925,6 +4061,8 @@ def run_mixer(
             "system": "system monitor",
         }.get(display_mode, "mixer")
         print(f"  Display: {display_label}")
+        if lock_screen_protection:
+            print("  Lock-screen protection: enabled")
         print("\nCalibrating for half a second...")
 
         previous: bytes | None = None
@@ -4081,7 +4219,14 @@ def run_mixer(
                     if display_cache is not None
                     else display_base_frame
                 )
-                if display.resident_display_mode is None:
+                if session_locked:
+                    display.submit_ordered(
+                        update_display_brightness(display_base_frame, 0)
+                    )
+                    print(
+                        "Session is locked; controller screen and controls are disabled."
+                    )
+                elif display.resident_display_mode is None:
                     display.submit_ordered(
                         render_startup_primer(display_base_frame, resident_frame)
                     )
@@ -4106,7 +4251,8 @@ def run_mixer(
                         "Persistent display session recovered through the "
                         "OpenStream100 logo."
                     )
-                display.submit(display_base_frame)
+                if not session_locked:
+                    display.submit(display_base_frame)
                 if display_cache is not None:
                     save_resident_display_frame(display_cache, display_base_frame)
                 display_dirty = False
@@ -4227,6 +4373,13 @@ def run_mixer(
         def apply_remote_command(remote_command: RemoteCommand) -> None:
             """Apply one validated phone command on the USB/PipeWire thread."""
             nonlocal display_dirty, volume_levels_dirty, display_due
+            if session_locked:
+                complete_remote_command(
+                    remote_command,
+                    False,
+                    "The computer is locked; mixer controls are disabled.",
+                )
+                return
             requested_page = (
                 current_page if remote_command.page is None else remote_command.page
             )
@@ -4347,6 +4500,7 @@ def run_mixer(
                     display_meter_levels,
                     last_remote_command,
                     publish_remote_icons(),
+                    session_locked,
                 )
             )
 
@@ -4378,6 +4532,37 @@ def run_mixer(
 
         while True:
             now = time.monotonic()
+            current_lock_state = lock_monitor.locked
+            if current_lock_state != session_locked:
+                session_locked = current_lock_state
+                accumulators = [0, 0, 0, 0]
+                volume_label_deadlines = [0.0, 0.0, 0.0, 0.0]
+                if session_locked:
+                    if display is not None:
+                        frame_to_blank = display_base_frame or last_display_base_frame
+                        if frame_to_blank is not None:
+                            try:
+                                display.submit_ordered(
+                                    update_display_brightness(frame_to_blank, 0)
+                                )
+                            except RuntimeError as error:
+                                print(
+                                    f"Could not turn off the locked controller "
+                                    f"screen: {error}",
+                                    file=sys.stderr,
+                                )
+                    print(
+                        "Session locked; controller screen and controls disabled.",
+                        flush=True,
+                    )
+                else:
+                    display_base_frame = None
+                    display_dirty = True
+                    display_due = now
+                    print(
+                        "Session unlocked; controller screen and controls restored.",
+                        flush=True,
+                    )
             if remote_bridge is not None:
                 for remote_command in remote_bridge.drain():
                     apply_remote_command(remote_command)
@@ -4529,7 +4714,7 @@ def run_mixer(
                     next_meter_log = now + 1.0
                 next_meter_update = now + METER_UPDATE_SECONDS
 
-            if display is not None:
+            if display is not None and not session_locked:
                 if display.error is not None and not display_error_reported:
                     print(f"Display helper stopped: {display.error}", file=sys.stderr)
                     display_error_reported = True
@@ -4661,6 +4846,13 @@ def run_mixer(
             except usb.core.USBTimeoutError:
                 continue
 
+            if session_locked:
+                # Keep a fresh input baseline so movements and presses made on
+                # the lock screen cannot be replayed after the session unlocks.
+                previous = packet
+                accumulators = [0, 0, 0, 0]
+                continue
+
             for encoder in range(1, 5):
                 channel_targets = targets[encoder - 1]
                 if not channel_targets:
@@ -4788,7 +4980,7 @@ def run_mixer(
         if level_monitor is not None:
             level_monitor.close()
         if display is not None:
-            if last_display_base_frame is not None:
+            if last_display_base_frame is not None and not session_locked:
                 try:
                     resident_logo = render_startup_display(
                         last_display_base_frame, DEFAULT_STARTUP_LOGO
@@ -4804,6 +4996,7 @@ def run_mixer(
                         file=sys.stderr,
                     )
             display.close()
+        lock_monitor.close()
 
 
 def main() -> int:
@@ -4854,6 +5047,7 @@ def main() -> int:
         meter_style = load_meter_style(args.config)
         volume_meter_mode = load_volume_meter_mode(args.config)
         display_brightness = load_display_brightness(args.config)
+        lock_screen_protection = load_lock_screen_protection(args.config)
         counts_per_percent = args.counts_per_percent
         if counts_per_percent is None:
             counts_per_percent = counts_per_percent_for_sensitivity(
@@ -4864,6 +5058,7 @@ def main() -> int:
             counts_per_percent,
             args.config,
             display_brightness,
+            lock_screen_protection,
             inverted,
             button_masks,
             None if args.no_display else args.display_helper,

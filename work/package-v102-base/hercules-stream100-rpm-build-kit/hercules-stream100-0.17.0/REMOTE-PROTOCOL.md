@@ -76,7 +76,8 @@ GET /api/v1/state
 
 The response contains `protocol`, a monotonically increasing `revision`, the
 active zero-based `page`, page metadata, four `channels`, and four programmable
-`actions`. Channel levels and stereo meters use floating-point values from
+`actions`. The boolean `locked` field tells clients that lock-screen protection
+is currently rejecting commands. Channel levels and stereo meters use floating-point values from
 `0.0` to `1.0`.
 Each channel may also include an authenticated, revisioned `icon` path. Clients
 should cache the returned 64-pixel PNG by its complete URL.
@@ -92,6 +93,8 @@ Every command contains protocol version `1`, a client-generated `request_id`,
 and a `command`. The server returns HTTP `202` after validation and queues the
 command onto the authoritative mixer thread. The resulting state includes a
 `last_command` object with the matching request ID, success flag, and message.
+When lock-screen protection is active and the PC is locked, queued commands are
+completed unsuccessfully without changing mixer state.
 Recent request IDs are deduplicated, so retrying a timed-out request cannot
 double-activate a programmable button.
 

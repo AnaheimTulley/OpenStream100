@@ -81,6 +81,8 @@ panel. It does not need administrator access. The control panel provides:
 - Up to eight saved mixer pages with four controls and actions per page
 - A custom display colour for each control
 - Adjustable 0.5% to 4.0% knob sensitivity
+- Optional lock-screen protection that turns off the controller screen and
+  ignores hardware and remote-control changes until the session is unlocked
 - Optional live meters with selectable Mono/Stereo monitoring and four visualiser styles
 - Four programmable buttons with automatic LED illumination
 - Mixer, Full-screen image, editable Notepad, and live System Monitor display modes
@@ -244,6 +246,12 @@ mixer applies it live through the controller's native backlight command, without
 redrawing or blanking the screen. Mixer, Full-screen image, and Notepad modes share the
 setting. The branded startup logo deliberately retains its separate
 hardware-validated brightness so startup remains clean and legible.
+
+Enable **Protect controls while PC is locked** to follow the graphical
+session's systemd-logind lock state. While locked, OpenStream100 turns the
+controller backlight off and discards encoder, knob, numbered-button, and
+remote-control input. Unlocking restores the selected display at its saved
+brightness without replaying input made on the lock screen.
 
 Under **Knob sensitivity**, choose how quickly all four controls change volume.
 The default 1.0% setting preserves OpenStream100's original response; lower

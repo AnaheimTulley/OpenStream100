@@ -25,6 +25,7 @@ for required in \
     "$source_dir/stream100-test-updates.py" \
     "$source_dir/stream100-test-system-monitor.py" \
     "$source_dir/stream100-test-badge-styles.py" \
+    "$source_dir/stream100-test-lock-screen.py" \
     "$source_dir/stream100_system_monitor.py" \
     "$source_dir/stream100-display-service.py" \
     "$source_dir/stream100-control.py" \
@@ -80,7 +81,7 @@ build_root="$(mktemp -d -t hercules-stream100-deb.XXXXXX)"
 trap 'rm -rf -- "$build_root"' EXIT
 
 # Standard Debian package directory layout
-pkg_dir="$build_root/hercules-stream100-0.18.1"
+pkg_dir="$build_root/hercules-stream100-0.18.2"
 mkdir -p "$pkg_dir/usr/libexec/hercules-stream100" \
     "$pkg_dir/usr/bin" \
     "$pkg_dir/usr/lib/systemd/user" \
@@ -190,7 +191,7 @@ install -Dpm0644 "$source_dir/REMOTE-PROTOCOL.md" \
 echo "Generating package control metadata..."
 cat > "$pkg_dir/DEBIAN/control" <<'EOF'
 Package: hercules-stream100
-Version: 0.18.1-1
+Version: 0.18.2-1
 Section: sound
 Priority: optional
 Architecture: amd64
@@ -274,6 +275,7 @@ python3 -m py_compile \
     stream100-test-updates.py \
     stream100-test-system-monitor.py \
     stream100-test-badge-styles.py \
+    stream100-test-lock-screen.py \
     stream100-test-notepad.py \
     stream100_channel_icons.py \
     stream100_system_monitor.py \
@@ -284,25 +286,26 @@ python3 stream100-test-remote.py
 python3 stream100-test-updates.py
 python3 stream100-test-system-monitor.py
 python3 stream100-test-badge-styles.py
+python3 stream100-test-lock-screen.py
 popd
 
 # --- Build the .deb ---
 echo "Building .deb package..."
 mkdir -p "$output_dir"
 dpkg-deb --build --root-owner-group "$pkg_dir" \
-    "$output_dir/hercules-stream100_0.18.1-1_amd64.deb"
+    "$output_dir/hercules-stream100_0.18.2-1_amd64.deb"
 
 echo ""
 echo "============================================"
 echo " Build complete!"
-echo " Package: $output_dir/hercules-stream100_0.18.1-1_amd64.deb"
+echo " Package: $output_dir/hercules-stream100_0.18.2-1_amd64.deb"
 echo "============================================"
 echo ""
 
 # --- Optional: install ---
 if (( install_after_build )); then
     echo "Installing the .deb package..."
-    sudo dpkg -i "$output_dir/hercules-stream100_0.18.1-1_amd64.deb"
+    sudo dpkg -i "$output_dir/hercules-stream100_0.18.2-1_amd64.deb"
 
     # Fix any missing dependencies
     echo "Checking for missing dependencies..."

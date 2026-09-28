@@ -1,6 +1,6 @@
 # Maintainer: OpenStream100 contributors <openstream100@users.noreply.github.com>
 pkgname=hercules-stream100
-pkgver=0.18.1
+pkgver=0.18.2
 pkgrel=1
 pkgdesc="OpenStream100 PipeWire controller for Hercules Stream 100 hardware"
 arch=('x86_64' 'aarch64')
@@ -42,7 +42,7 @@ source=(
     'arch-install-path.patch'
 )
 sha256sums=(
-    '1d789c9814f9259f6e32f6da9962a814afebf4eb7d72a315b1fa8ce36a6926a5'
+    '72ac71008802583a5437a6d52eeadad0e8b5e04fd85e0f617399fe58b4ad8420'
     '9f58463f8ee2bfd099e207136b9308f56c4497984223d0324a658497eb4e24cf'
     'cdd3b4d39040a63d4394d03a431d0e285334675ba2e5edf18645aaede7486f7a'
 )
@@ -83,6 +83,7 @@ check() {
         stream100-test-updates.py \
         stream100-test-system-monitor.py \
         stream100-test-badge-styles.py \
+        stream100-test-lock-screen.py \
         stream100_channel_icons.py \
         stream100_system_monitor.py \
         stream100_version.py
@@ -92,6 +93,7 @@ check() {
     python stream100-test-updates.py
     python stream100-test-system-monitor.py
     python stream100-test-badge-styles.py
+    python stream100-test-lock-screen.py
 
     desktop-file-validate packaging/com.hercules.Stream100.desktop
     appstreamcli validate --no-net \
