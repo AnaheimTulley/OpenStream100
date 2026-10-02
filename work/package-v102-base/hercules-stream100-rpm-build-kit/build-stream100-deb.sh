@@ -29,6 +29,9 @@ for required in \
     "$source_dir/stream100_system_monitor.py" \
     "$source_dir/stream100-display-service.py" \
     "$source_dir/stream100-control.py" \
+    "$source_dir/stream100-test-ios-sideload.py" \
+    "$source_dir/ios/OpenStream100Remote/install-ios.sh" \
+    "$source_dir/android/openstream100remote.apk" \
     "$source_dir/stream100-tray.py" \
     "$source_dir/stream100_preview.py" \
     "$source_dir/packaging/hercules-stream100" \
@@ -81,7 +84,7 @@ build_root="$(mktemp -d -t hercules-stream100-deb.XXXXXX)"
 trap 'rm -rf -- "$build_root"' EXIT
 
 # Standard Debian package directory layout
-pkg_dir="$build_root/hercules-stream100-0.18.2"
+pkg_dir="$build_root/hercules-stream100-0.18.3"
 mkdir -p "$pkg_dir/usr/libexec/hercules-stream100" \
     "$pkg_dir/usr/bin" \
     "$pkg_dir/usr/lib/systemd/user" \
@@ -143,6 +146,8 @@ install -pm0644 "$source_dir/stream100-display-replay.bin" \
     "$pkg_dir/usr/libexec/hercules-stream100/"
 install -pm0644 "$source_dir/openstream100-startup.png" \
     "$pkg_dir/usr/libexec/hercules-stream100/"
+cp -a "$source_dir/ios" "$pkg_dir/usr/libexec/hercules-stream100/ios"
+cp -a "$source_dir/android" "$pkg_dir/usr/libexec/hercules-stream100/android"
 
 # --- Install wrapper binary ---
 install -Dpm0755 "$source_dir/packaging/hercules-stream100" \
@@ -191,7 +196,7 @@ install -Dpm0644 "$source_dir/REMOTE-PROTOCOL.md" \
 echo "Generating package control metadata..."
 cat > "$pkg_dir/DEBIAN/control" <<'EOF'
 Package: hercules-stream100
-Version: 0.18.2-1
+Version: 0.18.3-1
 Section: sound
 Priority: optional
 Architecture: amd64
@@ -200,7 +205,7 @@ Depends: avahi-utils, bash, fontconfig, gir1.2-ayatanaappindicator3-0.1,
          pipewire, pipewire-pulse, python3, python3-gi,
          libqrencode4, python3-pil, python3-usb, systemd, wireplumber,
          libusb-1.0-0
-Recommends: playerctl
+Recommends: playerctl, adb
 Suggests: appstream
 Installed-Size: 0
 Maintainer: OpenStream100 contributors <openstream100@users.noreply.github.com>
@@ -273,6 +278,7 @@ python3 -m py_compile \
     stream100-test-virtual-mixer.py \
     stream100-test-remote.py \
     stream100-test-updates.py \
+    stream100-test-ios-sideload.py \
     stream100-test-system-monitor.py \
     stream100-test-badge-styles.py \
     stream100-test-lock-screen.py \
@@ -284,28 +290,30 @@ python3 stream100-test-notepad.py
 python3 stream100-test-virtual-mixer.py
 python3 stream100-test-remote.py
 python3 stream100-test-updates.py
+python3 stream100-test-ios-sideload.py
 python3 stream100-test-system-monitor.py
 python3 stream100-test-badge-styles.py
 python3 stream100-test-lock-screen.py
+python3 stream100-test-tray.py
 popd
 
 # --- Build the .deb ---
 echo "Building .deb package..."
 mkdir -p "$output_dir"
 dpkg-deb --build --root-owner-group "$pkg_dir" \
-    "$output_dir/hercules-stream100_0.18.2-1_amd64.deb"
+    "$output_dir/hercules-stream100_0.18.3-1_amd64.deb"
 
 echo ""
 echo "============================================"
 echo " Build complete!"
-echo " Package: $output_dir/hercules-stream100_0.18.2-1_amd64.deb"
+echo " Package: $output_dir/hercules-stream100_0.18.3-1_amd64.deb"
 echo "============================================"
 echo ""
 
 # --- Optional: install ---
 if (( install_after_build )); then
     echo "Installing the .deb package..."
-    sudo dpkg -i "$output_dir/hercules-stream100_0.18.2-1_amd64.deb"
+    sudo dpkg -i "$output_dir/hercules-stream100_0.18.3-1_amd64.deb"
 
     # Fix any missing dependencies
     echo "Checking for missing dependencies..."

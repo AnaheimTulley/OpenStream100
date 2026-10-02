@@ -26,6 +26,11 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.18.3" date="2026-10-02">
+      <description>
+        <p>Adds display-mode selection to the system-tray menu, using saved display settings and applying changes to a running mixer.</p>
+      </description>
+    </release>
     <release version="0.18.2" date="2026-09-28">
       <description>
         <p>Adds optional lock-screen protection that turns off the controller display and rejects hardware and remote-control changes until the desktop session is unlocked.</p>

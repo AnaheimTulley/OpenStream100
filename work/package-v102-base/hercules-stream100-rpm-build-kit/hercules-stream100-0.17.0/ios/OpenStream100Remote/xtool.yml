@@ -1,0 +1,6 @@
+version: 1
+bundleID: org.openstream100.remote.ios
+infoPath: Xtool-Info.plist
+iconPath: OpenStream100Remote/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+resources:
+  - OpenStream100Remote/PrivacyInfo.xcprivacy

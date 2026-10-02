@@ -3,7 +3,7 @@ set -euo pipefail
 
 kit_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$kit_dir/hercules-stream100-0.17.0"
-source_archive="$kit_dir/hercules-stream100-0.18.2.tar.gz"
+source_archive="$kit_dir/hercules-stream100-0.18.3.tar.gz"
 spec_file="$kit_dir/hercules-stream100.spec"
 output_dir="$kit_dir/dist"
 install_after_build=0
@@ -26,6 +26,9 @@ for required in \
     "$source_dir/stream100-test-virtual-mixer.py" \
     "$source_dir/stream100-test-remote.py" \
     "$source_dir/stream100-test-updates.py" \
+    "$source_dir/stream100-test-ios-sideload.py" \
+    "$source_dir/ios/OpenStream100Remote/install-ios.sh" \
+    "$source_dir/android/openstream100remote.apk" \
     "$source_dir/stream100-test-system-monitor.py" \
     "$source_dir/stream100-test-badge-styles.py" \
     "$source_dir/stream100-test-lock-screen.py" \
@@ -44,7 +47,7 @@ tar \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
     --exclude='stream100-test-native-meters' \
-    --transform='s,^hercules-stream100-0.17.0,hercules-stream100-0.18.2,' \
+    --transform='s,^hercules-stream100-0.17.0,hercules-stream100-0.18.3,' \
     --create \
     --gzip \
     --file="$archive_staging" \
@@ -93,7 +96,7 @@ find "$topdir/RPMS" "$topdir/SRPMS" -type f -name '*.rpm' \
 
 mapfile -t installable_rpms < <(
     find "$output_dir" -maxdepth 1 -type f \
-        -name 'hercules-stream100-0.18.2-1*.rpm' \
+        -name 'hercules-stream100-0.18.3-1*.rpm' \
         ! -name '*.src.rpm' \
         ! -name '*-debuginfo-*' \
         ! -name '*-debugsource-*'

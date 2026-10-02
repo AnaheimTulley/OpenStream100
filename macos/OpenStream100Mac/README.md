@@ -39,6 +39,10 @@ swift test
 swift run OpenStream100Mac
 ```
 
+The `OpenStream100Core` test suite also runs with Swift 6 on Linux. The macOS
+executable target is omitted there because SwiftUI, Core Audio, and IOKit are
+Apple-platform frameworks.
+
 To create an unsigned `.app` bundle:
 
 ```bash

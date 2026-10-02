@@ -1,0 +1,261 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		500000000000000000000001 /* OpenStream100RemoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000001 /* OpenStream100RemoteApp.swift */; };
+		500000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000002 /* Models.swift */; };
+		500000000000000000000003 /* RemoteAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000003 /* RemoteAPI.swift */; };
+		500000000000000000000004 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000004 /* CredentialStore.swift */; };
+		500000000000000000000005 /* DiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000005 /* DiscoveryService.swift */; };
+		500000000000000000000006 /* RemoteViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000006 /* RemoteViewModel.swift */; };
+		500000000000000000000007 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000007 /* ContentView.swift */; };
+		500000000000000000000008 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000008 /* PairingView.swift */; };
+		500000000000000000000009 /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000009 /* QRCodeScannerView.swift */; };
+		50000000000000000000000A /* MixerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000A /* MixerView.swift */; };
+		50000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		200000000000000000000001 /* OpenStream100Remote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenStream100Remote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		400000000000000000000001 /* OpenStream100RemoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenStream100RemoteApp.swift; sourceTree = "<group>"; };
+		400000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		400000000000000000000003 /* RemoteAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAPI.swift; sourceTree = "<group>"; };
+		400000000000000000000004 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
+		400000000000000000000005 /* DiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryService.swift; sourceTree = "<group>"; };
+		400000000000000000000006 /* RemoteViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteViewModel.swift; sourceTree = "<group>"; };
+		400000000000000000000007 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		400000000000000000000008 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		400000000000000000000009 /* QRCodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerView.swift; sourceTree = "<group>"; };
+		40000000000000000000000A /* MixerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixerView.swift; sourceTree = "<group>"; };
+		40000000000000000000000B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		40000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		600000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		300000000000000000000000 = {
+			isa = PBXGroup;
+			children = (
+				300000000000000000000001 /* OpenStream100Remote */,
+				300000000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		300000000000000000000001 /* OpenStream100Remote */ = {
+			isa = PBXGroup;
+			children = (
+				400000000000000000000001 /* OpenStream100RemoteApp.swift */,
+				400000000000000000000002 /* Models.swift */,
+				400000000000000000000003 /* RemoteAPI.swift */,
+				400000000000000000000004 /* CredentialStore.swift */,
+				400000000000000000000005 /* DiscoveryService.swift */,
+				400000000000000000000006 /* RemoteViewModel.swift */,
+				400000000000000000000007 /* ContentView.swift */,
+				400000000000000000000008 /* PairingView.swift */,
+				400000000000000000000009 /* QRCodeScannerView.swift */,
+				40000000000000000000000A /* MixerView.swift */,
+				40000000000000000000000B /* Assets.xcassets */,
+				40000000000000000000000C /* Info.plist */,
+			);
+			path = OpenStream100Remote;
+			sourceTree = "<group>";
+		};
+		300000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000001 /* OpenStream100Remote.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		100000000000000000000001 /* OpenStream100Remote */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000002 /* Build configuration list for PBXNativeTarget "OpenStream100Remote" */;
+			buildPhases = (
+				600000000000000000000001 /* Sources */,
+				600000000000000000000002 /* Frameworks */,
+				600000000000000000000003 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = OpenStream100Remote;
+			packageProductDependencies = ();
+			productName = OpenStream100Remote;
+			productReference = 200000000000000000000001 /* OpenStream100Remote.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		700000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					100000000000000000000001 = { CreatedOnToolsVersion = 27.0; };
+				};
+			};
+			buildConfigurationList = 900000000000000000000001 /* Build configuration list for PBXProject "OpenStream100Remote" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = 300000000000000000000000;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 300000000000000000000002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (100000000000000000000001 /* OpenStream100Remote */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		600000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (50000000000000000000000B /* Assets.xcassets in Resources */);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		600000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				500000000000000000000001 /* OpenStream100RemoteApp.swift in Sources */,
+				500000000000000000000002 /* Models.swift in Sources */,
+				500000000000000000000003 /* RemoteAPI.swift in Sources */,
+				500000000000000000000004 /* CredentialStore.swift in Sources */,
+				500000000000000000000005 /* DiscoveryService.swift in Sources */,
+				500000000000000000000006 /* RemoteViewModel.swift in Sources */,
+				500000000000000000000007 /* ContentView.swift in Sources */,
+				500000000000000000000008 /* PairingView.swift in Sources */,
+				500000000000000000000009 /* QRCodeScannerView.swift in Sources */,
+				50000000000000000000000A /* MixerView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		800000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)");
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+		};
+			name = Debug;
+		};
+		800000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		800000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OpenStream100Remote/Info.plist;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.openstream100.remote.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		800000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OpenStream100Remote/Info.plist;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.openstream100.remote.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		900000000000000000000001 /* Build configuration list for PBXProject "OpenStream100Remote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (800000000000000000000001 /* Debug */, 800000000000000000000002 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000002 /* Build configuration list for PBXNativeTarget "OpenStream100Remote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (800000000000000000000003 /* Debug */, 800000000000000000000004 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 700000000000000000000001 /* Project object */;
+}

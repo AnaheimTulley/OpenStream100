@@ -75,7 +75,8 @@ The installer copies the application into your personal applications folder,
 adds **OpenStream100** to Fedora's app launcher, and opens its control
 panel. It does not need administrator access. The control panel provides:
 
-- Mixer, Buttons, Display, and Android app tabs that keep related settings together
+- Mixer, Buttons, Display, and Remote (Phone App) tabs, with Remote access,
+  Android app, and iOS app subtabs
 - Display settings that adapt to the selected display mode
 - Four application assignment menus
 - Up to eight saved mixer pages with four controls and actions per page
@@ -86,7 +87,10 @@ panel. It does not need administrator access. The control panel provides:
 - Optional live meters with selectable Mono/Stereo monitoring and four visualiser styles
 - Four programmable buttons with automatic LED illumination
 - Mixer, Full-screen image, editable Notepad, and live System Monitor display modes
-- Ayatana system-tray indicator with Open, Start/Stop, and Restart actions
+- Ayatana system-tray indicator with Open, Start/Stop, Restart, and Display mode
+  actions. Select Mixer, Full-screen image, Notepad, or System monitor using the
+  saved display settings; a running mixer restarts to apply the mode, while a
+  stopped mixer stays stopped.
 - Live 480×272 preview of unsaved display settings in the Display tab
 - Saved Notepad font size, family, style, text colour, and alignment controls
 - Separate imported images for the mixer background and full-screen artwork
@@ -97,6 +101,10 @@ panel. It does not need administrator access. The control panel provides:
 - A separate mouse-controlled virtual mixer window
 - Saved Android remote enablement with mDNS discovery, one-time PIN pairing,
   QR fallback, and individually revocable paired phones
+- Guided Android sideloading with ADB device checks, a bundled APK, live output,
+  and cancellation
+- Guided iOS sideloading with Xtool prerequisite checks, live installer output,
+  and cancellation from the control panel
 - Automatic daily and manual GitHub release checks with a **View release** link
 - **Start mixer** and **Stop mixer** buttons
 - An **Apply changes** button

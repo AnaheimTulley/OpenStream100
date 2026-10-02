@@ -65,7 +65,9 @@ OpenStream100 supports four display modes:
   CPU, GPU, memory, and mounted-disk sources. Separate GPUs are identified by
   PCI address; CPU and GPU sources include temperature when Linux exposes it.
 - **System tray** — keep OpenStream100 available from the desktop indicator,
-  with quick actions to open the control panel and start, stop, or restart the mixer.
+  with quick actions to open the control panel, change display mode, and start,
+  stop, or restart the mixer. Changing mode applies the saved display settings
+  by restarting a running mixer; a stopped mixer stays stopped.
 - **Live display preview** — inspect unsaved Mixer, image, Notepad, and System
   Monitor settings at the controller's native aspect ratio before applying them.
 
@@ -85,9 +87,10 @@ four-channel mixer with smooth touch faders, live meters, mute controls, page
 navigation, programmable buttons, and assigned application icons.
 
 The Linux control panel groups its settings into **Mixer**, **Buttons**,
-**Display**, and **Android app** tabs. Mixer-page management sits at the top of
-the Mixer tab, while the main service controls remain visible between sections.
-The Display tab shows only the settings relevant to its selected display mode.
+**Display**, and **Remote (Phone App)** tabs. The Remote tab contains separate
+**Remote access**, **Android app**, and **iOS app** sections. Remote access
+manages the server and paired phones; the platform sections provide guided
+USB sideloading with prerequisite checks, live progress, and cancellation.
 
 The Linux control panel checks GitHub for newer stable releases at most once a
 day and also provides a manual **Check for updates** button. Updates are shown
@@ -120,19 +123,19 @@ The release includes `SHA256SUMS` for verifying downloaded files.
 ### Fedora
 
 ```bash
-sudo dnf install ./hercules-stream100-0.18.2-1.fc44.x86_64.rpm
+sudo dnf install ./hercules-stream100-0.18.3-1.fc44.x86_64.rpm
 ```
 
 ### Debian or Ubuntu
 
 ```bash
-sudo apt install ./hercules-stream100_0.18.2-1_amd64.deb
+sudo apt install ./hercules-stream100_0.18.3-1_amd64.deb
 ```
 
 ### Arch Linux and derivatives
 
 ```bash
-sudo pacman -U ./hercules-stream100-0.18.2-1-x86_64.pkg.tar.zst
+sudo pacman -U ./hercules-stream100-0.18.3-1-x86_64.pkg.tar.zst
 ```
 
 The maintained `PKGBUILD` and its build instructions are available in
@@ -140,14 +143,20 @@ The maintained `PKGBUILD` and its build instructions are available in
 
 ### Android
 
-Download `openstream100remote.apk` on the phone and approve installation from
-the browser or file manager when Android asks. The APK is currently distributed
-directly through GitHub rather than an app store.
+On Linux, open **Remote (Phone App) > Android app**, enable USB debugging on the
+phone, connect it by USB, and select **Check device** followed by **Install on
+connected device**. This uses Android platform tools (`adb`) and the APK bundled
+with OpenStream100. The APK is also distributed through GitHub for manual
+installation.
 
 ### iOS
 
-The iOS app is distributed as source. On Linux or macOS, install
-[Xtool](https://xtool.sh), connect an unlocked iPhone or iPad by USB, and run:
+The iOS app is distributed as source. On Linux, open **Remote (Phone App) >
+iOS app**, select **Check setup**, connect an unlocked iPhone or iPad by USB,
+and select **Install on connected device**.
+
+For command-line installation on Linux or macOS, install
+[Xtool](https://xtool.sh), connect the device, and run:
 
 ```bash
 cd ios/OpenStream100Remote

@@ -1,5 +1,5 @@
 Name:           hercules-stream100
-Version:        0.18.2
+Version:        0.18.3
 Release:        1%{?dist}
 Summary:        OpenStream100 PipeWire controller for Hercules Stream 100 hardware
 
@@ -31,6 +31,7 @@ Requires:       python3-pillow
 Requires:       python3-pyusb
 Requires:       systemd
 Requires:       wireplumber
+Recommends:     android-tools
 
 %description
 OpenStream100 provides up to eight pages of four per-application PipeWire volume controls for the
@@ -99,6 +100,8 @@ install -pm0644 stream100-display-replay.bin \
     %{buildroot}%{_libexecdir}/%{name}/stream100-display-replay.bin
 install -pm0644 openstream100-startup.png \
     %{buildroot}%{_libexecdir}/%{name}/openstream100-startup.png
+cp -a ios %{buildroot}%{_libexecdir}/%{name}/ios
+cp -a android %{buildroot}%{_libexecdir}/%{name}/android
 
 install -Dpm0755 packaging/hercules-stream100 \
      %{buildroot}%{_bindir}/hercules-stream100
@@ -140,6 +143,7 @@ python3 -m py_compile \
      stream100-test-remote.py \
      stream100-test-notepad.py \
      stream100-test-updates.py \
+     stream100-test-ios-sideload.py \
      stream100-test-system-monitor.py \
      stream100-test-badge-styles.py \
      stream100-test-lock-screen.py \
@@ -150,9 +154,11 @@ python3 stream100-test-notepad.py
 python3 stream100-test-virtual-mixer.py
 python3 stream100-test-remote.py
 python3 stream100-test-updates.py
+python3 stream100-test-ios-sideload.py
 python3 stream100-test-system-monitor.py
 python3 stream100-test-badge-styles.py
 python3 stream100-test-lock-screen.py
+python3 stream100-test-tray.py
 desktop-file-validate \
      %{buildroot}%{_datadir}/applications/com.hercules.Stream100.desktop
 appstream-util validate-relax --nonet \
@@ -197,6 +203,8 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_libexecdir}/%{name}/button_labels_overlay_basic.png
 %{_libexecdir}/%{name}/button_labels_overlay_glass.png
 %{_libexecdir}/%{name}/button_labels_overlay_template.png
+%{_libexecdir}/%{name}/ios
+%{_libexecdir}/%{name}/android
 %{_userunitdir}/hercules-stream100-display.service
 %{_userunitdir}/hercules-stream100-mixer.service
 %{_userunitdir}/hercules-stream100.service
@@ -208,6 +216,10 @@ gcc $CFLAGS -std=c11 -Wall -Wextra stream100-test-native-meters.c \
 %{_mandir}/man1/hercules-stream100.1*
 
 %changelog
+* Fri Oct 02 2026 OpenStream100 contributors - 0.18.3-1
+- Add display-mode selection to the system-tray menu
+- Preserve saved settings and apply modes without starting a stopped mixer
+
 * Mon Sep 28 2026 OpenStream100 contributors - 0.18.2-1
 - Add optional systemd-logind lock-screen protection
 - Turn the controller backlight fully off while the desktop is locked

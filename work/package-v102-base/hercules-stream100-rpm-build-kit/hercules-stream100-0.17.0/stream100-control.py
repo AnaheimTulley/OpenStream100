@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import signal
 import shutil
 import subprocess
 import sys
@@ -114,6 +115,9 @@ VIRTUAL_MIXER_RUNNER = APP_DIR / "run-stream100-virtual-mixer.sh"
 PACKAGED_VIRTUAL_MIXER_RUNNER = Path(
     "/usr/libexec/hercules-stream100/run-stream100-virtual-mixer.sh"
 )
+IOS_PROJECT_DIR = APP_DIR / "ios" / "OpenStream100Remote"
+IOS_INSTALLER = IOS_PROJECT_DIR / "install-ios.sh"
+ANDROID_APK_PATH = APP_DIR / "android" / "openstream100remote.apk"
 DEFAULT_CHANNEL_COLOURS = ["#30CCBE", "#36D380", "#F6BE40", "#5B82F6"]
 DEFAULT_CHANNELS: list[dict[str, str]] = [
     {"kind": "default", "label": "Default output device", "color": DEFAULT_CHANNEL_COLOURS[0]},
@@ -125,6 +129,78 @@ DEFAULT_CHANNELS: list[dict[str, str]] = [
 
 def command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(arguments, check=False, capture_output=True, text=True)
+
+
+def ios_sideload_readiness(
+    project_dir: Path = IOS_PROJECT_DIR,
+    which: Any = shutil.which,
+    run: Any = command,
+) -> tuple[bool, list[str]]:
+    """Check the local pieces Xtool needs before an iOS install is started."""
+    required_files = (
+        project_dir / "Package.swift",
+        project_dir / "xtool.yml",
+        project_dir / "install-ios.sh",
+    )
+    if not all(path.is_file() for path in required_files):
+        return False, ["The packaged iOS app source could not be found."]
+    if which("xtool") is None:
+        return False, [
+            "Xtool is not installed or is not on PATH.",
+            "Install it from https://xtool.sh, then run: xtool setup",
+        ]
+
+    auth = run(["xtool", "auth", "status"])
+    if auth.returncode != 0:
+        return False, [
+            "No Xtool Apple account is configured.",
+            "Run xtool setup in a terminal, then check again.",
+        ]
+    sdk = run(["xtool", "sdk", "status"])
+    if sdk.returncode != 0:
+        return False, [
+            "The Xtool Darwin SDK is missing.",
+            "Run xtool setup or xtool sdk install, then check again.",
+        ]
+    return True, ["Xtool, your Apple account, and the Darwin SDK are ready."]
+
+
+def android_sideload_readiness(
+    apk_path: Path = ANDROID_APK_PATH,
+    which: Any = shutil.which,
+    run: Any = command,
+) -> tuple[bool, list[str]]:
+    """Check ADB, the bundled APK, and the connected Android device."""
+    if not apk_path.is_file():
+        return False, ["The packaged Android app could not be found."]
+    if which("adb") is None:
+        return False, [
+            "Android platform tools (adb) are not installed or are not on PATH.",
+            "Install the android-tools package, then check again.",
+        ]
+    devices = run(["adb", "devices"])
+    if devices.returncode != 0:
+        return False, ["ADB could not list connected Android devices."]
+
+    entries: list[tuple[str, str]] = []
+    for line in devices.stdout.splitlines()[1:]:
+        fields = line.strip().split()
+        if len(fields) >= 2:
+            entries.append((fields[0], fields[1]))
+    ready_devices = [serial for serial, state in entries if state == "device"]
+    if any(state == "unauthorized" for _serial, state in entries):
+        return False, [
+            "The connected Android device has not authorised this computer.",
+            "Unlock it and accept the USB debugging prompt, then check again.",
+        ]
+    if not ready_devices:
+        return False, [
+            "No Android device is ready for sideloading.",
+            "Connect one by USB and enable Developer options > USB debugging.",
+        ]
+    if len(ready_devices) > 1:
+        return False, ["Connect only one Android device before installing."]
+    return True, [f"Android device {ready_devices[0]} is ready."]
 
 
 def parse_release_version(value: object) -> tuple[int, int, int] | None:
@@ -1383,6 +1459,10 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             self.calibration_output = ""
             self.calibration_was_running = False
             self.calibration_cancelled = False
+            self.android_install_process: subprocess.Popen[str] | None = None
+            self.android_check_in_progress = False
+            self.ios_install_process: subprocess.Popen[str] | None = None
+            self.ios_check_in_progress = False
             self.update_check_in_progress = False
             self.available_update: dict[str, str] | None = None
             self.display_preview_renderer = DisplayPreview()
@@ -1401,7 +1481,7 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             title.add_css_class("title-1")
             root.append(title)
             subtitle = Gtk.Label(
-                label="Configure the mixer, controller display, and Android app."
+                label="Configure the mixer, controller display, and mobile apps."
             )
             subtitle.set_xalign(0)
             subtitle.set_wrap(True)
@@ -1442,7 +1522,28 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             mixer_tab = add_tab("Mixer")
             buttons_tab = add_tab("Buttons")
             display_tab = add_tab("Display")
-            android_tab = add_tab("Android app")
+            remote_tab = add_tab("Remote (Phone App)")
+
+            remote_sections = Gtk.Notebook()
+            remote_sections.set_hexpand(True)
+            remote_sections.set_vexpand(True)
+            remote_tab.append(remote_sections)
+
+            def add_remote_tab(label: str):
+                page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+                page.set_margin_top(16)
+                page.set_margin_bottom(16)
+                page.set_margin_start(12)
+                page.set_margin_end(12)
+                scroller = Gtk.ScrolledWindow()
+                scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+                scroller.set_child(page)
+                remote_sections.append_page(scroller, Gtk.Label(label=label))
+                return page
+
+            remote_access_tab = add_remote_tab("Remote access")
+            android_tab = add_remote_tab("Android app")
+            ios_tab = add_remote_tab("iOS app")
 
             preview_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=6
@@ -2295,7 +2396,7 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             self.update_mode_controls()
 
             remote_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            remote_title = Gtk.Label(label="Android remote control")
+            remote_title = Gtk.Label(label="Phone remote control")
             remote_title.set_xalign(0)
             remote_title.add_css_class("heading")
             remote_box.append(remote_title)
@@ -2377,7 +2478,150 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
             firewall_hint.set_wrap(True)
             firewall_hint.add_css_class("dim-label")
             remote_box.append(firewall_hint)
-            android_tab.append(remote_box)
+            remote_access_tab.append(remote_box)
+
+            android_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            android_title = Gtk.Label(label="Install OpenStream100 Remote on Android")
+            android_title.set_xalign(0)
+            android_title.add_css_class("title-2")
+            android_box.append(android_title)
+
+            android_description = Gtk.Label(
+                label=(
+                    "Sideload the bundled Android app over USB. On the phone, enable "
+                    "Developer options and USB debugging, connect it to this computer, "
+                    "then approve the debugging prompt."
+                )
+            )
+            android_description.set_xalign(0)
+            android_description.set_wrap(True)
+            android_box.append(android_description)
+
+            android_requirements = Gtk.Label(
+                label=(
+                    "Requires Android platform tools (adb). Installing again updates "
+                    "the app while retaining its saved pairing information."
+                )
+            )
+            android_requirements.set_xalign(0)
+            android_requirements.set_wrap(True)
+            android_requirements.add_css_class("dim-label")
+            android_box.append(android_requirements)
+
+            self.android_setup_status = Gtk.Label(label="Select Check device to begin.")
+            self.android_setup_status.set_xalign(0)
+            self.android_setup_status.set_wrap(True)
+            android_box.append(self.android_setup_status)
+
+            android_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            self.android_check_button = Gtk.Button(label="Check device")
+            self.android_check_button.connect("clicked", self.on_check_android_setup)
+            android_actions.append(self.android_check_button)
+            self.android_install_button = Gtk.Button(label="Install on connected device")
+            self.android_install_button.add_css_class("suggested-action")
+            self.android_install_button.set_sensitive(False)
+            self.android_install_button.connect("clicked", self.on_install_android_app)
+            android_actions.append(self.android_install_button)
+            self.android_cancel_button = Gtk.Button(label="Cancel")
+            self.android_cancel_button.set_sensitive(False)
+            self.android_cancel_button.connect("clicked", self.on_cancel_android_install)
+            android_actions.append(self.android_cancel_button)
+            android_box.append(android_actions)
+
+            android_output_frame = Gtk.Frame()
+            android_output_scroller = Gtk.ScrolledWindow()
+            android_output_scroller.set_min_content_height(230)
+            android_output_scroller.set_policy(
+                Gtk.PolicyType.AUTOMATIC,
+                Gtk.PolicyType.AUTOMATIC,
+            )
+            self.android_output = Gtk.TextView()
+            self.android_output.set_editable(False)
+            self.android_output.set_cursor_visible(False)
+            self.android_output.set_monospace(True)
+            self.android_output.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            android_output_scroller.set_child(self.android_output)
+            android_output_frame.set_child(android_output_scroller)
+            android_box.append(android_output_frame)
+            android_tab.append(android_box)
+
+            ios_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            ios_title = Gtk.Label(label="Install OpenStream100 Remote on iOS")
+            ios_title.set_xalign(0)
+            ios_title.add_css_class("title-2")
+            ios_box.append(ios_title)
+
+            ios_description = Gtk.Label(
+                label=(
+                    "Build, sign, and sideload the iOS app with your own Apple "
+                    "Account. Connect and unlock your iPhone or iPad over USB, "
+                    "tap Trust if prompted, and keep it connected during installation."
+                )
+            )
+            ios_description.set_xalign(0)
+            ios_description.set_wrap(True)
+            ios_box.append(ios_description)
+
+            ios_requirements = Gtk.Label(
+                label=(
+                    "Requires iOS 17 or newer and Xtool with its Darwin SDK. "
+                    "Free Apple provisioning must be renewed every seven days."
+                )
+            )
+            ios_requirements.set_xalign(0)
+            ios_requirements.set_wrap(True)
+            ios_requirements.add_css_class("dim-label")
+            ios_box.append(ios_requirements)
+
+            self.ios_setup_status = Gtk.Label(label="Select Check setup to begin.")
+            self.ios_setup_status.set_xalign(0)
+            self.ios_setup_status.set_wrap(True)
+            ios_box.append(self.ios_setup_status)
+
+            ios_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            self.ios_check_button = Gtk.Button(label="Check setup")
+            self.ios_check_button.connect("clicked", self.on_check_ios_setup)
+            ios_actions.append(self.ios_check_button)
+            self.ios_install_button = Gtk.Button(label="Install on connected device")
+            self.ios_install_button.add_css_class("suggested-action")
+            self.ios_install_button.set_sensitive(False)
+            self.ios_install_button.connect("clicked", self.on_install_ios_app)
+            ios_actions.append(self.ios_install_button)
+            self.ios_cancel_button = Gtk.Button(label="Cancel")
+            self.ios_cancel_button.set_sensitive(False)
+            self.ios_cancel_button.connect("clicked", self.on_cancel_ios_install)
+            ios_actions.append(self.ios_cancel_button)
+            ios_box.append(ios_actions)
+
+            output_frame = Gtk.Frame()
+            output_scroller = Gtk.ScrolledWindow()
+            output_scroller.set_min_content_height(230)
+            output_scroller.set_policy(
+                Gtk.PolicyType.AUTOMATIC,
+                Gtk.PolicyType.AUTOMATIC,
+            )
+            self.ios_output = Gtk.TextView()
+            self.ios_output.set_editable(False)
+            self.ios_output.set_cursor_visible(False)
+            self.ios_output.set_monospace(True)
+            self.ios_output.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            output_scroller.set_child(self.ios_output)
+            output_frame.set_child(output_scroller)
+            ios_box.append(output_frame)
+
+            ios_aftercare = Gtk.Label(
+                label=(
+                    "After installation, enable Developer Mode if iOS requests it, "
+                    "then open OpenStream100 Remote from the Home Screen. If the "
+                    "developer is untrusted, approve it under Settings > General > "
+                    "VPN & Device Management."
+                )
+            )
+            ios_aftercare.set_xalign(0)
+            ios_aftercare.set_wrap(True)
+            ios_aftercare.add_css_class("dim-label")
+            ios_box.append(ios_aftercare)
+            ios_tab.append(ios_box)
 
             footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
             footer.set_vexpand(False)
@@ -3554,6 +3798,243 @@ def make_window_class(Gtk, GLib, Gdk, GdkPixbuf):
         def on_virtual_mixer_clicked(self, _button) -> None:
             launched, message = launch_virtual_mixer()
             self.show_message(message, error=not launched)
+
+        def set_android_setup_status(self, message: str, ready: bool = False) -> None:
+            self.android_setup_status.set_text(message)
+            self.android_setup_status.remove_css_class("success")
+            self.android_setup_status.remove_css_class("error")
+            self.android_setup_status.add_css_class("success" if ready else "error")
+
+        def on_check_android_setup(self, _button) -> None:
+            if self.android_check_in_progress or self.android_install_process is not None:
+                return
+            self.android_check_in_progress = True
+            self.android_check_button.set_sensitive(False)
+            self.android_install_button.set_sensitive(False)
+            self.android_setup_status.set_text("Checking ADB and the connected device…")
+            self.android_setup_status.remove_css_class("success")
+            self.android_setup_status.remove_css_class("error")
+
+            def worker() -> None:
+                try:
+                    ready, messages = android_sideload_readiness()
+                except OSError as error:
+                    ready, messages = False, [f"Could not check ADB: {error}"]
+                GLib.idle_add(
+                    self.finish_android_setup_check,
+                    ready,
+                    "\n".join(messages),
+                )
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def finish_android_setup_check(self, ready: bool, message: str) -> bool:
+            self.android_check_in_progress = False
+            self.android_check_button.set_sensitive(True)
+            self.android_install_button.set_sensitive(ready)
+            self.set_android_setup_status(message, ready=ready)
+            return False
+
+        def append_android_output(self, text: str) -> None:
+            if not text:
+                return
+            buffer = self.android_output.get_buffer()
+            buffer.insert(buffer.get_end_iter(), text)
+            mark = buffer.create_mark(None, buffer.get_end_iter(), False)
+            self.android_output.scroll_mark_onscreen(mark)
+
+        def on_install_android_app(self, _button) -> None:
+            if self.android_install_process is not None:
+                return
+            try:
+                process = subprocess.Popen(
+                    ["adb", "install", "-r", str(ANDROID_APK_PATH)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    start_new_session=True,
+                )
+                if process.stdout is None:
+                    raise RuntimeError("Could not read the Android installer output.")
+                os.set_blocking(process.stdout.fileno(), False)
+            except (OSError, RuntimeError) as error:
+                self.set_android_setup_status(f"Could not start installation: {error}")
+                return
+
+            self.android_install_process = process
+            self.android_output.get_buffer().set_text("")
+            self.append_android_output("Starting Android installation…\n\n")
+            self.android_check_button.set_sensitive(False)
+            self.android_install_button.set_sensitive(False)
+            self.android_cancel_button.set_sensitive(True)
+            self.android_setup_status.set_text("Installing on Android device…")
+            self.android_setup_status.remove_css_class("success")
+            self.android_setup_status.remove_css_class("error")
+            GLib.timeout_add(100, self.poll_android_install)
+
+        def on_cancel_android_install(self, _button) -> None:
+            process = self.android_install_process
+            if process is None:
+                return
+            self.append_android_output("\nCancelling installation…\n")
+            self.android_cancel_button.set_sensitive(False)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+        def poll_android_install(self) -> bool:
+            process = self.android_install_process
+            if process is None:
+                return False
+            if process.stdout is not None:
+                try:
+                    self.append_android_output(process.stdout.read() or "")
+                except (BlockingIOError, OSError):
+                    pass
+            return_code = process.poll()
+            if return_code is None:
+                return True
+
+            if process.stdout is not None:
+                try:
+                    self.append_android_output(process.stdout.read() or "")
+                except (BlockingIOError, OSError):
+                    pass
+                process.stdout.close()
+            self.android_install_process = None
+            self.android_check_button.set_sensitive(True)
+            self.android_cancel_button.set_sensitive(False)
+            succeeded = return_code == 0
+            self.android_install_button.set_sensitive(succeeded)
+            if succeeded:
+                self.set_android_setup_status(
+                    "Installation finished. Open the app on your Android device.",
+                    ready=True,
+                )
+            else:
+                self.set_android_setup_status(
+                    "Installation did not finish. Review the output below, then check the device and try again."
+                )
+            return False
+
+        def set_ios_setup_status(self, message: str, ready: bool = False) -> None:
+            self.ios_setup_status.set_text(message)
+            self.ios_setup_status.remove_css_class("success")
+            self.ios_setup_status.remove_css_class("error")
+            self.ios_setup_status.add_css_class("success" if ready else "error")
+
+        def on_check_ios_setup(self, _button) -> None:
+            if self.ios_check_in_progress or self.ios_install_process is not None:
+                return
+            self.ios_check_in_progress = True
+            self.ios_check_button.set_sensitive(False)
+            self.ios_install_button.set_sensitive(False)
+            self.ios_setup_status.set_text("Checking Xtool setup…")
+            self.ios_setup_status.remove_css_class("success")
+            self.ios_setup_status.remove_css_class("error")
+
+            def worker() -> None:
+                try:
+                    ready, messages = ios_sideload_readiness()
+                except OSError as error:
+                    ready, messages = False, [f"Could not check Xtool: {error}"]
+                GLib.idle_add(self.finish_ios_setup_check, ready, "\n".join(messages))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def finish_ios_setup_check(self, ready: bool, message: str) -> bool:
+            self.ios_check_in_progress = False
+            self.ios_check_button.set_sensitive(True)
+            self.ios_install_button.set_sensitive(ready)
+            self.set_ios_setup_status(message, ready=ready)
+            return False
+
+        def append_ios_output(self, text: str) -> None:
+            if not text:
+                return
+            buffer = self.ios_output.get_buffer()
+            buffer.insert(buffer.get_end_iter(), text)
+            mark = buffer.create_mark(None, buffer.get_end_iter(), False)
+            self.ios_output.scroll_mark_onscreen(mark)
+
+        def on_install_ios_app(self, _button) -> None:
+            if self.ios_install_process is not None:
+                return
+            try:
+                process = subprocess.Popen(
+                    ["/usr/bin/bash", str(IOS_INSTALLER)],
+                    cwd=IOS_PROJECT_DIR,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    start_new_session=True,
+                )
+                if process.stdout is None:
+                    raise RuntimeError("Could not read the iOS installer output.")
+                os.set_blocking(process.stdout.fileno(), False)
+            except (OSError, RuntimeError) as error:
+                self.set_ios_setup_status(f"Could not start installation: {error}")
+                return
+
+            self.ios_install_process = process
+            self.ios_output.get_buffer().set_text("")
+            self.append_ios_output("Starting iOS installation…\n\n")
+            self.ios_check_button.set_sensitive(False)
+            self.ios_install_button.set_sensitive(False)
+            self.ios_cancel_button.set_sensitive(True)
+            self.ios_setup_status.set_text("Building and installing…")
+            self.ios_setup_status.remove_css_class("success")
+            self.ios_setup_status.remove_css_class("error")
+            GLib.timeout_add(100, self.poll_ios_install)
+
+        def on_cancel_ios_install(self, _button) -> None:
+            process = self.ios_install_process
+            if process is None:
+                return
+            self.append_ios_output("\nCancelling installation…\n")
+            self.ios_cancel_button.set_sensitive(False)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+        def poll_ios_install(self) -> bool:
+            process = self.ios_install_process
+            if process is None:
+                return False
+            if process.stdout is not None:
+                try:
+                    self.append_ios_output(process.stdout.read() or "")
+                except (BlockingIOError, OSError):
+                    pass
+            return_code = process.poll()
+            if return_code is None:
+                return True
+
+            if process.stdout is not None:
+                try:
+                    self.append_ios_output(process.stdout.read() or "")
+                except (BlockingIOError, OSError):
+                    pass
+                process.stdout.close()
+            self.ios_install_process = None
+            self.ios_check_button.set_sensitive(True)
+            self.ios_cancel_button.set_sensitive(False)
+            succeeded = return_code == 0
+            self.ios_install_button.set_sensitive(succeeded)
+            if succeeded:
+                self.set_ios_setup_status(
+                    "Installation finished. Open the app on your iOS device.",
+                    ready=True,
+                )
+            else:
+                self.set_ios_setup_status(
+                    "Installation did not finish. Review the output below, then check setup and try again."
+                )
+            return False
 
         def on_calibrate_mute_buttons(self, _button) -> None:
             if self.calibration_process is not None:

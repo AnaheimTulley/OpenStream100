@@ -1,6 +1,6 @@
 # Maintainer: OpenStream100 contributors <openstream100@users.noreply.github.com>
 pkgname=hercules-stream100
-pkgver=0.18.2
+pkgver=0.18.3
 pkgrel=1
 pkgdesc="OpenStream100 PipeWire controller for Hercules Stream 100 hardware"
 arch=('x86_64' 'aarch64')
@@ -28,6 +28,7 @@ depends=(
     'wireplumber'
 )
 optdepends=(
+    'android-tools: guided Android app sideloading over USB'
     'playerctl: media control actions for programmable buttons'
 )
 makedepends=(
@@ -42,7 +43,7 @@ source=(
     'arch-install-path.patch'
 )
 sha256sums=(
-    '72ac71008802583a5437a6d52eeadad0e8b5e04fd85e0f617399fe58b4ad8420'
+    '5e2ee7eb7b5bb38fe2618ff3dff95a7affaa35a46c3ad1cbb1ff5b946b18b876'
     '9f58463f8ee2bfd099e207136b9308f56c4497984223d0324a658497eb4e24cf'
     'cdd3b4d39040a63d4394d03a431d0e285334675ba2e5edf18645aaede7486f7a'
 )
@@ -81,6 +82,7 @@ check() {
         stream100-test-remote.py \
         stream100-test-virtual-mixer.py \
         stream100-test-updates.py \
+        stream100-test-ios-sideload.py \
         stream100-test-system-monitor.py \
         stream100-test-badge-styles.py \
         stream100-test-lock-screen.py \
@@ -91,9 +93,11 @@ check() {
     python stream100-test-virtual-mixer.py
     python stream100-test-remote.py
     python stream100-test-updates.py
+    python stream100-test-ios-sideload.py
     python stream100-test-system-monitor.py
     python stream100-test-badge-styles.py
     python stream100-test-lock-screen.py
+    python stream100-test-tray.py
 
     desktop-file-validate packaging/com.hercules.Stream100.desktop
     appstreamcli validate --no-net \
@@ -149,6 +153,9 @@ package() {
         stream100-display-replay.bin \
         openstream100-startup.png \
         "${libexec_dir}/"
+
+    cp -a ios "${libexec_dir}/ios"
+    cp -a android "${libexec_dir}/android"
 
     install -m0755 packaging/hercules-stream100 \
         "${pkgdir}/usr/bin/hercules-stream100"

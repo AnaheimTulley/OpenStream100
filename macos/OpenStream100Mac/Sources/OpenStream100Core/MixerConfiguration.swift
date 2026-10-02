@@ -87,19 +87,28 @@ public struct MixerConfiguration: Codable, Equatable, Sendable {
     ]
 
     public mutating func normalize() {
-        var byID = Dictionary(uniqueKeysWithValues: channels.map { ($0.id, $0) })
+        // Configuration files are user-editable. Keep the last channel when an
+        // ID is repeated rather than trapping in Dictionary(uniqueKeysWithValues:).
+        var byID: [Int: MixerChannel] = [:]
+        for channel in channels where (0..<4).contains(channel.id) {
+            byID[channel.id] = channel
+        }
         channels = (0..<4).map { index in
             var channel = byID.removeValue(forKey: index) ?? Self.defaultChannels[index]
             channel.id = index
             if !Self.validColor(channel.colorHex) {
                 channel.colorHex = Self.defaultChannels[index].colorHex
             }
-            if let volume = channel.volume {
+            if let volume = channel.volume, volume.isFinite {
                 channel.volume = min(max(volume, 0), 1)
+            } else if channel.volume != nil {
+                channel.volume = nil
             }
             return channel
         }
-        knobSensitivity = min(max(knobSensitivity, 0.5), 4)
+        knobSensitivity = knobSensitivity.isFinite
+            ? min(max(knobSensitivity, 0.5), 4)
+            : 1
         version = Self.currentVersion
     }
 
